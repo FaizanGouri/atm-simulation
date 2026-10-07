@@ -28,9 +28,10 @@ void ui_print_customer_menu(const CustomerSession *session)
     printf("3. Withdraw\n");
     printf("4. Transfer Money\n");
     printf("5. Manage Beneficiaries\n");
-    printf("6. Logout\n");
+    printf("6. Mini Statement\n");
+    printf("7. Logout\n");
     printf("========================================\n");
-    printf("Enter choice [1-6]: ");
+    printf("Enter choice [1-7]: ");
     fflush(stdout);
 }
 
@@ -383,6 +384,114 @@ void ui_handle_manage_beneficiaries(const CustomerSession *session)
             printf("\n[ERROR] Invalid choice '%s'. Please enter 1-4.\n", choice_buf);
         }
     }
+}
+
+void ui_display_mini_statement(const CustomerSession *session, const StatementList *list)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active customer session.\n");
+        return;
+    }
+
+    AccountRecord acc;
+    if (!account_get_by_id(session->account_id, &acc)) {
+        printf("\n[ERROR] Unable to fetch account information.\n");
+        return;
+    }
+
+    char masked_acc[32];
+    account_mask_number(acc.account_number, masked_acc, sizeof(masked_acc));
+
+    char formatted_bal[48];
+    account_format_currency(acc.balance, formatted_bal, sizeof(formatted_bal));
+
+    printf("\n========================================================================================\n");
+    printf("                                    MINI STATEMENT\n");
+    printf("========================================================================================\n");
+    printf("Account Number  : %s\n", masked_acc);
+    printf("Account Holder  : %s\n", session->customer_name);
+    printf("Account Type    : %s\n", acc.account_type);
+    printf("----------------------------------------------------------------------------------------\n");
+    printf("%-18s  %-12s  %-16s  %-9s  %-24s\n", "Date & Time", "Type", "Amount", "Status", "Details");
+    printf("----------------------------------------------------------------------------------------\n");
+
+    if (!list || list->count == 0) {
+        printf("  No transactions found for this account.\n");
+    } else {
+        for (size_t i = 0; i < list->count; i++) {
+            const StatementItem *item = &list->items[i];
+
+            char fmt_amt[48];
+            account_format_currency(item->amount, fmt_amt, sizeof(fmt_amt));
+
+            char signed_amt[56];
+            snprintf(signed_amt, sizeof(signed_amt), "%s%s", item->is_credit ? "+" : "-", fmt_amt);
+
+            const char *type_str = transaction_type_to_string(item->type);
+            const char *status_str = transaction_status_to_string(item->status);
+
+            char details[64] = {0};
+            if (item->type == TXN_TYPE_TRANSFER) {
+                if (item->has_related_account && item->related_account_number[0] != '\0') {
+                    char masked_rel[32];
+                    account_mask_number(item->related_account_number, masked_rel, sizeof(masked_rel));
+                    snprintf(details, sizeof(details), "%s %s", item->is_credit ? "From" : "To", masked_rel);
+                } else {
+                    snprintf(details, sizeof(details), "Fund Transfer");
+                }
+            } else if (item->type == TXN_TYPE_DEPOSIT) {
+                snprintf(details, sizeof(details), "Cash Deposit");
+            } else if (item->type == TXN_TYPE_WITHDRAWAL) {
+                snprintf(details, sizeof(details), "ATM Withdrawal");
+            } else {
+                strncpy(details, item->description, sizeof(details) - 1);
+            }
+
+            printf("%-18s  %-12s  %-16s  %-9s  %-24s\n",
+                   item->created_at_formatted,
+                   type_str,
+                   signed_amt,
+                   status_str,
+                   details);
+        }
+    }
+
+    printf("----------------------------------------------------------------------------------------\n");
+    printf("Current Available Balance : %s\n", formatted_bal);
+    printf("========================================================================================\n");
+}
+
+void ui_handle_mini_statement(const CustomerSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active customer session.\n");
+        return;
+    }
+
+    printf("\nMini Statement Options:\n");
+    printf("1. Last 5 transactions\n");
+    printf("2. Last 10 transactions (Default)\n");
+    printf("3. Last 20 transactions\n");
+    printf("Enter choice [1-3, or Enter for default]: ");
+    fflush(stdout);
+
+    char choice_buf[16];
+    unsigned int limit = 10;
+    if (fgets(choice_buf, sizeof(choice_buf), stdin)) {
+        validation_trim(choice_buf);
+        if (strcmp(choice_buf, "1") == 0) limit = 5;
+        else if (strcmp(choice_buf, "2") == 0) limit = 10;
+        else if (strcmp(choice_buf, "3") == 0) limit = 20;
+    }
+
+    StatementList list;
+    if (!transaction_get_statement(session->account_id, limit, &list)) {
+        printf("\n[ERROR] Unable to retrieve transaction history: %s\n", db_get_last_error(NULL));
+        return;
+    }
+
+    ui_display_mini_statement(session, &list);
+    ui_pause();
 }
 
 void ui_pause(void)

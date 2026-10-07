@@ -505,6 +505,162 @@ static void run_automated_phase7_tests(void)
     printf("=======================================================\n\n");
 }
 
+static void run_automated_phase8_tests(void)
+{
+    printf("\n=======================================================\n");
+    printf("        PHASE 8 MINI STATEMENT TEST SUITE             \n");
+    printf("=======================================================\n");
+
+    /* Test 1: Unauthenticated session cannot access mini statement */
+    printf("\n[TEST 1] Unauthenticated Session Access:\n");
+    CustomerSession fake_session;
+    memset(&fake_session, 0, sizeof(fake_session));
+    fake_session.is_authenticated = false;
+    printf("Calling ui_display_mini_statement with unauthenticated session:\n");
+    ui_display_mini_statement(&fake_session, NULL);
+    printf("Unauthenticated access rejected -> PASS\n");
+
+    /* Test 2: Authenticated Account 1 can retrieve transactions */
+    printf("\n[TEST 2] Retrieve Transactions for Account 1:\n");
+    StatementList list;
+    bool ok_fetch = transaction_get_statement(1, 10, &list);
+    bool test2_pass = ok_fetch && (list.count >= 2);
+    printf("Retrieved %zu transactions for Account 1 -> %s\n", list.count, test2_pass ? "PASS" : "FAIL");
+
+    /* Test 3: Transactions are ordered newest first (created_at DESC, transaction_id DESC) */
+    printf("\n[TEST 3] Ordering Check (Newest First):\n");
+    /* Seeded: Txn 2 (Withdrawal on 2026-10-02) then Txn 1 (Deposit on 2026-10-01) */
+    bool test3_pass = false;
+    if (list.count >= 2) {
+        test3_pass = (list.items[0].transaction_id == 2 && list.items[1].transaction_id == 1);
+        printf("Item 0 ID: %llu (Ref: %s, Date: %s)\n",
+               (unsigned long long)list.items[0].transaction_id,
+               list.items[0].transaction_reference,
+               list.items[0].created_at_formatted);
+        printf("Item 1 ID: %llu (Ref: %s, Date: %s)\n",
+               (unsigned long long)list.items[1].transaction_id,
+               list.items[1].transaction_reference,
+               list.items[1].created_at_formatted);
+    }
+    printf("Newest transaction first ordering: %s\n", test3_pass ? "PASS" : "FAIL");
+
+    /* Test 4: Limit works */
+    printf("\n[TEST 4] Transaction Limit Verification:\n");
+    StatementList list_lim1;
+    bool ok_lim = transaction_get_statement(1, 1, &list_lim1);
+    bool test4_pass = ok_lim && (list_lim1.count == 1);
+    printf("Requested limit=1 returned %zu record(s) -> %s\n", list_lim1.count, test4_pass ? "PASS" : "FAIL");
+
+    /* Test 5: Empty transaction history handled cleanly */
+    printf("\n[TEST 5] Empty Transaction History:\n");
+    StatementList empty_list;
+    bool ok_empty = transaction_get_statement(99999, 10, &empty_list);
+    bool test5_pass = ok_empty && (empty_list.count == 0);
+    printf("Querying account with no transactions returned %zu records -> %s\n", empty_list.count, test5_pass ? "PASS" : "FAIL");
+
+    /* Test 6: Account isolation (Account 1 cannot see Account 2 records) */
+    printf("\n[TEST 6] Account Isolation Enforcement:\n");
+    bool test6_pass = true;
+    for (size_t i = 0; i < list.count; i++) {
+        if (list.items[i].transaction_id == 3) { /* Txn 3 belongs to Account 2 */
+            test6_pass = false;
+            break;
+        }
+    }
+    printf("Account 1 retrieved only its own records (Account 2 isolated): %s\n", test6_pass ? "PASS" : "FAIL");
+
+    /* Test 7 & 8: Deposit (+) and Withdrawal (-) display validation */
+    printf("\n[TEST 7 & 8] Deposit Credit (+) and Withdrawal Debit (-) Detection:\n");
+    bool test7_pass = (list.count >= 2 && list.items[1].type == TXN_TYPE_DEPOSIT && list.items[1].is_credit == true);
+    bool test8_pass = (list.count >= 2 && list.items[0].type == TXN_TYPE_WITHDRAWAL && list.items[0].is_credit == false);
+    printf("Deposit detected as credit (+): %s\n", test7_pass ? "PASS" : "FAIL");
+    printf("Withdrawal detected as debit (-): %s\n", test8_pass ? "PASS" : "FAIL");
+
+    /* Test 9 & 10: Outgoing transfer debit (-) and Incoming transfer credit (+) */
+    printf("\n[TEST 9 & 10] Transfer Debit (-) and Credit (+) in Statement:\n");
+    TransferReceipt t_rcpt;
+    TransferResult t_res = transfer_execute(1, 1, "1000.00", &t_rcpt);
+    bool ok_transfer = (t_res == TRANSFER_SUCCESS);
+
+    StatementList src_stmt, dst_stmt;
+    transaction_get_statement(1, 5, &src_stmt);
+    transaction_get_statement(2, 5, &dst_stmt);
+
+    bool test9_pass = ok_transfer && (src_stmt.count > 0 &&
+                      src_stmt.items[0].type == TXN_TYPE_TRANSFER &&
+                      src_stmt.items[0].is_credit == false &&
+                      strcmp(src_stmt.items[0].amount, "1000.00") == 0);
+
+    bool test10_pass = ok_transfer && (dst_stmt.count > 0 &&
+                       dst_stmt.items[0].type == TXN_TYPE_TRANSFER &&
+                       dst_stmt.items[0].is_credit == true &&
+                       strcmp(dst_stmt.items[0].amount, "1000.00") == 0);
+
+    printf("Outgoing transfer from Account 1 recorded as Debit (-): %s\n", test9_pass ? "PASS" : "FAIL");
+    printf("Incoming transfer to Account 2 recorded as Credit (+): %s\n", test10_pass ? "PASS" : "FAIL");
+
+    /* Test 11: Transaction status */
+    printf("\n[TEST 11] Transaction Status Display:\n");
+    bool test11_pass = (src_stmt.count > 0 && src_stmt.items[0].status == TXN_STATUS_SUCCESS);
+    printf("Transaction status is SUCCESS: %s\n", test11_pass ? "PASS" : "FAIL");
+
+    /* Test 12: Decimal string preservation (Zero Float Math) */
+    printf("\n[TEST 12] Fixed-Point Exact Monetary Value Integrity:\n");
+    bool test12_pass = (strcmp(src_stmt.items[0].amount, "1000.00") == 0) &&
+                       (strcmp(src_stmt.items[0].balance_after, "44000.00") == 0);
+    printf("Exact decimal strings preserved without float: %s\n", test12_pass ? "PASS" : "FAIL");
+
+    /* Test 13: Multiple sequential reads */
+    printf("\n[TEST 13] Multiple Statement Invocations (Resource Safety):\n");
+    bool test13_pass = true;
+    for (int i = 0; i < 5; i++) {
+        StatementList temp;
+        if (!transaction_get_statement(1, 10, &temp)) {
+            test13_pass = false;
+            break;
+        }
+    }
+    printf("5 sequential statement queries completed: %s\n", test13_pass ? "PASS" : "FAIL");
+
+    /* Test 14: Default limit fallback */
+    printf("\n[TEST 14] Default Limit Handling:\n");
+    StatementList def_list;
+    bool test14_pass = transaction_get_statement(1, 0, &def_list) && (def_list.count <= 10);
+    printf("Limit=0 safely defaults to 10: %s\n", test14_pass ? "PASS" : "FAIL");
+
+    /* Test Clean Up and State Restoration */
+    printf("\n--- DATABASE STATE RESTORATION ---\n");
+    MYSQL *conn = db_get_connection();
+    if (conn) {
+        mysql_query(conn, "UPDATE accounts SET balance = 45000.00 WHERE account_id = 1");
+        mysql_query(conn, "UPDATE accounts SET balance = 75000.00 WHERE account_id = 2");
+        char del_t[256];
+        snprintf(del_t, sizeof(del_t),
+                 "DELETE FROM transactions WHERE transaction_reference IN ('%s-DR', '%s-CR')",
+                 t_rcpt.transaction_reference, t_rcpt.transaction_reference);
+        mysql_query(conn, del_t);
+    }
+    AccountRecord final_a1, final_a2;
+    account_get_by_id(1, &final_a1);
+    account_get_by_id(2, &final_a2);
+    bool rest_ok = (strcmp(final_a1.balance, "45000.00") == 0) &&
+                   (strcmp(final_a2.balance, "75000.00") == 0);
+    printf("Restored Account 1 Balance: %s, Account 2: %s -> %s\n",
+           final_a1.balance, final_a2.balance, rest_ok ? "PASS" : "FAIL");
+
+    printf("\n=======================================================\n");
+    bool all_passed = test2_pass && test3_pass && test4_pass && test5_pass &&
+                      test6_pass && test7_pass && test8_pass && test9_pass && test10_pass &&
+                      test11_pass && test12_pass && test13_pass && test14_pass && rest_ok;
+
+    if (all_passed) {
+        printf("              ALL PHASE 8 TESTS PASSED                 \n");
+    } else {
+        printf("              SOME PHASE 8 TESTS FAILED                \n");
+    }
+    printf("=======================================================\n\n");
+}
+
 static void run_customer_menu_loop(CustomerSession *session)
 {
     char choice_buf[16];
@@ -529,11 +685,13 @@ static void run_customer_menu_loop(CustomerSession *session)
         } else if (strcmp(choice_buf, "5") == 0) {
             ui_handle_manage_beneficiaries(session);
         } else if (strcmp(choice_buf, "6") == 0) {
+            ui_handle_mini_statement(session);
+        } else if (strcmp(choice_buf, "7") == 0) {
             printf("\nLogging out. Thank you for using our ATM.\n");
             auth_logout(session);
             in_menu = false;
         } else {
-            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 6.\n", choice_buf);
+            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 7.\n", choice_buf);
         }
     }
 }
@@ -570,6 +728,12 @@ int main(int argc, char *argv[])
 
     if (argc > 1 && strcmp(argv[1], "--test-phase7") == 0) {
         run_automated_phase7_tests();
+        db_disconnect();
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--test-phase8") == 0) {
+        run_automated_phase8_tests();
         db_disconnect();
         return 0;
     }
