@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "admin.h"
 #include "account.h"
 #include "database.h"
 #include "validation.h"
@@ -555,3 +556,530 @@ void ui_pause(void)
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
 }
+
+void ui_print_top_menu(void)
+{
+    printf("\n========================================\n");
+    printf("              ATM SYSTEM\n");
+    printf("========================================\n");
+    printf("1. Customer Login\n");
+    printf("2. Admin Login\n");
+    printf("3. Exit\n");
+    printf("========================================\n");
+    printf("Enter choice [1-3]: ");
+    fflush(stdout);
+}
+
+void ui_print_admin_menu(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) return;
+
+    printf("\n========================================\n");
+    printf("             ADMIN DASHBOARD\n");
+    printf("========================================\n");
+    printf("1. View Customers\n");
+    printf("2. View Customer Accounts\n");
+    printf("3. View Cards\n");
+    printf("4. Block Card\n");
+    printf("5. Unblock Card\n");
+    printf("6. View Transactions\n");
+    printf("7. ATM Cash Status\n");
+    printf("8. ATM Cash Refill\n");
+    printf("9. Statistics\n");
+    printf("10. Logout\n");
+    printf("========================================\n");
+    printf("Enter choice [1-10]: ");
+    fflush(stdout);
+}
+
+bool ui_handle_admin_login(AdminSession *session)
+{
+    if (!session) return false;
+
+    printf("\n========================================\n");
+    printf("          ADMINISTRATOR LOGIN\n");
+    printf("========================================\n");
+
+    char username_buf[64] = {0};
+    printf("Username: ");
+    fflush(stdout);
+    if (!fgets(username_buf, sizeof(username_buf), stdin)) {
+        return false;
+    }
+    validation_trim(username_buf);
+
+    char password_buf[64] = {0};
+    if (!security_read_masked_input("Password: ", password_buf, sizeof(password_buf))) {
+        printf("\nLogin cancelled.\n");
+        memset(password_buf, 0, sizeof(password_buf));
+        return false;
+    }
+
+    AdminAuthResult res = admin_authenticate(username_buf, password_buf, session);
+    memset(password_buf, 0, sizeof(password_buf));
+
+    if (res == ADMIN_AUTH_SUCCESS) {
+        printf("\n========================================\n");
+        printf("    ADMINISTRATOR LOGIN SUCCESSFUL\n");
+        printf("========================================\n");
+        printf("Welcome, %s (%s)!\n", session->full_name, admin_role_to_string(session->role));
+        return true;
+    } else {
+        printf("\n[ERROR] %s\n", admin_auth_result_to_message(res));
+        return false;
+    }
+}
+
+void ui_display_admin_customers(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    AdminCustomerList list;
+    if (!admin_get_customers(session, &list)) {
+        printf("\n[ERROR] Unable to retrieve customer directory.\n");
+        return;
+    }
+
+    printf("\n========================================================================================\n");
+    printf("                                CUSTOMER DIRECTORY\n");
+    printf("========================================================================================\n");
+    printf("%-5s | %-15s | %-20s | %-22s | %-12s | %-8s\n",
+           "ID", "Cust Number", "Full Name", "Email", "Phone", "Status");
+    printf("------+-----------------+----------------------+------------------------+--------------+---------\n");
+
+    for (size_t i = 0; i < list.count; i++) {
+        printf("%-5llu | %-15s | %-20s | %-22s | %-12s | %-8s\n",
+               (unsigned long long)list.items[i].customer_id,
+               list.items[i].customer_number,
+               list.items[i].full_name,
+               list.items[i].email,
+               list.items[i].phone,
+               list.items[i].status);
+    }
+    printf("========================================================================================\n");
+    printf("Total records displayed: %zu\n", list.count);
+    ui_pause();
+}
+
+void ui_display_admin_accounts(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    char in_buf[32];
+    printf("\nEnter Customer ID: ");
+    fflush(stdout);
+    if (!fgets(in_buf, sizeof(in_buf), stdin)) return;
+    validation_trim(in_buf);
+    uint64_t cid = strtoull(in_buf, NULL, 10);
+    if (cid == 0) {
+        printf("[ERROR] Invalid Customer ID.\n");
+        return;
+    }
+
+    AdminAccountList list;
+    if (!admin_get_customer_accounts(session, cid, &list)) {
+        printf("\n[ERROR] Unable to retrieve customer accounts.\n");
+        return;
+    }
+
+    if (list.count == 0) {
+        printf("\nNo accounts found for Customer ID %llu.\n", (unsigned long long)cid);
+        ui_pause();
+        return;
+    }
+
+    printf("\n================================================================================\n");
+    printf("                        ACCOUNTS FOR CUSTOMER ID %llu\n", (unsigned long long)cid);
+    printf("================================================================================\n");
+    printf("%-8s | %-18s | %-12s | %-18s | %-10s\n",
+           "Acc ID", "Account Number", "Type", "Balance", "Status");
+    printf("---------+--------------------+--------------+--------------------+-----------\n");
+
+    for (size_t i = 0; i < list.count; i++) {
+        char masked[32];
+        account_mask_number(list.items[i].account_number, masked, sizeof(masked));
+        char formatted_bal[48];
+        account_format_currency(list.items[i].balance, formatted_bal, sizeof(formatted_bal));
+
+        printf("%-8llu | %-18s | %-12s | %-18s | %-10s\n",
+               (unsigned long long)list.items[i].account_id,
+               masked,
+               list.items[i].account_type,
+               formatted_bal,
+               list.items[i].status);
+    }
+    printf("================================================================================\n");
+    ui_pause();
+}
+
+void ui_display_admin_cards(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    char in_buf[32];
+    printf("\nEnter Account ID: ");
+    fflush(stdout);
+    if (!fgets(in_buf, sizeof(in_buf), stdin)) return;
+    validation_trim(in_buf);
+    uint64_t aid = strtoull(in_buf, NULL, 10);
+    if (aid == 0) {
+        printf("[ERROR] Invalid Account ID.\n");
+        return;
+    }
+
+    AdminCardList list;
+    if (!admin_get_account_cards(session, aid, &list)) {
+        printf("\n[ERROR] Unable to retrieve account cards.\n");
+        return;
+    }
+
+    if (list.count == 0) {
+        printf("\nNo cards found for Account ID %llu.\n", (unsigned long long)aid);
+        ui_pause();
+        return;
+    }
+
+    printf("\n================================================================================\n");
+    printf("                          CARDS FOR ACCOUNT ID %llu\n", (unsigned long long)aid);
+    printf("================================================================================\n");
+    printf("%-8s | %-20s | %-12s | %-12s | %-15s\n",
+           "Card ID", "Card Number", "Status", "Expiry", "Failed Attempts");
+    printf("---------+----------------------+--------------+--------------+----------------\n");
+
+    for (size_t i = 0; i < list.count; i++) {
+        char masked_card[24];
+        size_t len = strlen(list.items[i].card_number);
+        if (len >= 4) {
+            snprintf(masked_card, sizeof(masked_card), "****-****-****-%s", list.items[i].card_number + (len - 4));
+        } else {
+            strncpy(masked_card, list.items[i].card_number, sizeof(masked_card) - 1);
+            masked_card[sizeof(masked_card) - 1] = '\0';
+        }
+
+        printf("%-8llu | %-20s | %-12s | %-12s | %-15u\n",
+               (unsigned long long)list.items[i].card_id,
+               masked_card,
+               list.items[i].status,
+               list.items[i].expiry_date,
+               list.items[i].failed_pin_attempts);
+    }
+    printf("================================================================================\n");
+    ui_pause();
+}
+
+void ui_handle_admin_block_card(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    char in_buf[32];
+    printf("\nEnter Card ID to BLOCK: ");
+    fflush(stdout);
+    if (!fgets(in_buf, sizeof(in_buf), stdin)) return;
+    validation_trim(in_buf);
+    uint64_t cid = strtoull(in_buf, NULL, 10);
+    if (cid == 0) {
+        printf("[ERROR] Invalid Card ID.\n");
+        return;
+    }
+
+    AdminCardOpResult res = admin_block_card(session, cid);
+    if (res == ADMIN_CARD_OP_SUCCESS) {
+        printf("\n[SUCCESS] Card ID %llu has been BLOCKED.\n", (unsigned long long)cid);
+    } else {
+        printf("\n[ERROR] %s\n", admin_card_op_result_to_message(res));
+    }
+    ui_pause();
+}
+
+void ui_handle_admin_unblock_card(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    char in_buf[32];
+    printf("\nEnter Card ID to UNBLOCK: ");
+    fflush(stdout);
+    if (!fgets(in_buf, sizeof(in_buf), stdin)) return;
+    validation_trim(in_buf);
+    uint64_t cid = strtoull(in_buf, NULL, 10);
+    if (cid == 0) {
+        printf("[ERROR] Invalid Card ID.\n");
+        return;
+    }
+
+    AdminCardOpResult res = admin_unblock_card(session, cid);
+    if (res == ADMIN_CARD_OP_SUCCESS) {
+        printf("\n[SUCCESS] Card ID %llu has been UNBLOCKED and reset to ACTIVE.\n", (unsigned long long)cid);
+    } else {
+        printf("\n[ERROR] %s\n", admin_card_op_result_to_message(res));
+    }
+    ui_pause();
+}
+
+void ui_display_admin_transactions(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    char buf[32];
+    printf("\nFilter by Account ID (0 for all): ");
+    fflush(stdout);
+    uint64_t aid_filt = 0;
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        aid_filt = strtoull(buf, NULL, 10);
+    }
+
+    printf("Filter by Type (DEPOSIT, WITHDRAWAL, TRANSFER, PIN_CHANGE, or Enter for all): ");
+    fflush(stdout);
+    char type_filt[32] = {0};
+    if (fgets(type_filt, sizeof(type_filt), stdin)) {
+        validation_trim(type_filt);
+    }
+
+    printf("Filter by Status (SUCCESS, FAILED, REVERSED, or Enter for all): ");
+    fflush(stdout);
+    char stat_filt[32] = {0};
+    if (fgets(stat_filt, sizeof(stat_filt), stdin)) {
+        validation_trim(stat_filt);
+    }
+
+    printf("Limit (default 15, max 50): ");
+    fflush(stdout);
+    unsigned int lim = 15;
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        if (buf[0] != '\0') lim = (unsigned int)strtoul(buf, NULL, 10);
+    }
+
+    AdminTransactionList list;
+    if (!admin_get_transactions(session, aid_filt, type_filt, stat_filt, lim, &list)) {
+        printf("\n[ERROR] Unable to retrieve transactions.\n");
+        return;
+    }
+
+    printf("\n========================================================================================================\n");
+    printf("                                         TRANSACTION LOGS\n");
+    printf("========================================================================================================\n");
+    printf("%-5s | %-19s | %-16s | %-12s | %-12s | %-8s | %-19s\n",
+           "ID", "Reference", "Account", "Type", "Amount", "Status", "Timestamp");
+    printf("------+---------------------+------------------+--------------+--------------+----------+--------------------\n");
+
+    for (size_t i = 0; i < list.count; i++) {
+        char masked[32];
+        account_mask_number(list.items[i].account_number, masked, sizeof(masked));
+        char formatted_amt[48];
+        account_format_currency(list.items[i].amount, formatted_amt, sizeof(formatted_amt));
+
+        printf("%-5llu | %-19s | %-16s | %-12s | %-12s | %-8s | %-19s\n",
+               (unsigned long long)list.items[i].transaction_id,
+               list.items[i].transaction_reference,
+               masked,
+               list.items[i].transaction_type,
+               formatted_amt,
+               list.items[i].status,
+               list.items[i].created_at);
+    }
+    printf("========================================================================================================\n");
+    printf("Total records retrieved: %zu\n", list.count);
+    ui_pause();
+}
+
+void ui_display_admin_cash_status(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    AdminAtmCashStatus st;
+    if (!admin_get_cash_status(session, 1, &st)) {
+        printf("\n[ERROR] Unable to retrieve ATM cash status.\n");
+        return;
+    }
+
+    char tot_str[32];
+    snprintf(tot_str, sizeof(tot_str), "%llu.00", (unsigned long long)st.total_cash);
+    char fmt_tot[48];
+    account_format_currency(tot_str, fmt_tot, sizeof(fmt_tot));
+
+    char sub_500[32], sub_200[32], sub_100[32], sub_50[32];
+    snprintf(sub_500, sizeof(sub_500), "%llu.00", (unsigned long long)st.qty_500 * 500);
+    snprintf(sub_200, sizeof(sub_200), "%llu.00", (unsigned long long)st.qty_200 * 200);
+    snprintf(sub_100, sizeof(sub_100), "%llu.00", (unsigned long long)st.qty_100 * 100);
+    snprintf(sub_50,  sizeof(sub_50),  "%llu.00", (unsigned long long)st.qty_50  * 50);
+
+    char f_500[48], f_200[48], f_100[48], f_50[48];
+    account_format_currency(sub_500, f_500, sizeof(f_500));
+    account_format_currency(sub_200, f_200, sizeof(f_200));
+    account_format_currency(sub_100, f_100, sizeof(f_100));
+    account_format_currency(sub_50,  f_50,  sizeof(f_50));
+
+    printf("\n=======================================================\n");
+    printf("                ATM CASH INVENTORY STATUS              \n");
+    printf("=======================================================\n");
+    printf("Denomination | Quantity | Subtotal Value\n");
+    printf("-------------+----------+------------------------------\n");
+    printf("  Rs. 500    | %-8u | %s\n", st.qty_500, f_500);
+    printf("  Rs. 200    | %-8u | %s\n", st.qty_200, f_200);
+    printf("  Rs. 100    | %-8u | %s\n", st.qty_100, f_100);
+    printf("  Rs. 50     | %-8u | %s\n", st.qty_50,  f_50);
+    printf("=======================================================\n");
+    printf("Total Cash in ATM Vault: %s\n", fmt_tot);
+    printf("=======================================================\n");
+    ui_pause();
+}
+
+void ui_handle_admin_refill_cash(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    printf("\n========================================\n");
+    printf("           ATM CASH REFILL\n");
+    printf("========================================\n");
+
+    AdminAtmRefillInput in;
+    memset(&in, 0, sizeof(in));
+
+    char buf[32];
+    printf("Enter additional Rs. 500 notes to add: ");
+    fflush(stdout);
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        if (buf[0] != '\0') in.add_500 = (uint32_t)strtoul(buf, NULL, 10);
+    }
+
+    printf("Enter additional Rs. 200 notes to add: ");
+    fflush(stdout);
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        if (buf[0] != '\0') in.add_200 = (uint32_t)strtoul(buf, NULL, 10);
+    }
+
+    printf("Enter additional Rs. 100 notes to add: ");
+    fflush(stdout);
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        if (buf[0] != '\0') in.add_100 = (uint32_t)strtoul(buf, NULL, 10);
+    }
+
+    printf("Enter additional Rs. 50 notes to add: ");
+    fflush(stdout);
+    if (fgets(buf, sizeof(buf), stdin)) {
+        validation_trim(buf);
+        if (buf[0] != '\0') in.add_50 = (uint32_t)strtoul(buf, NULL, 10);
+    }
+
+    AdminRefillResult res = admin_refill_cash(session, 1, &in);
+    if (res == ADMIN_REFILL_SUCCESS) {
+        printf("\n[SUCCESS] %s\n", admin_refill_result_to_message(res));
+    } else {
+        printf("\n[ERROR] %s\n", admin_refill_result_to_message(res));
+    }
+    ui_pause();
+}
+
+void ui_display_admin_statistics(const AdminSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active admin session.\n");
+        return;
+    }
+
+    AdminStatistics stats;
+    if (!admin_get_statistics(session, &stats)) {
+        printf("\n[ERROR] Unable to calculate system statistics.\n");
+        return;
+    }
+
+    char f_dep[48], f_wth[48], f_trf[48];
+    account_format_currency(stats.deposit_total, f_dep, sizeof(f_dep));
+    account_format_currency(stats.withdrawal_total, f_wth, sizeof(f_wth));
+    account_format_currency(stats.transfer_total, f_trf, sizeof(f_trf));
+
+    char atm_tot_str[32];
+    snprintf(atm_tot_str, sizeof(atm_tot_str), "%llu.00", (unsigned long long)stats.total_atm_cash);
+    char f_atm[48];
+    account_format_currency(atm_tot_str, f_atm, sizeof(f_atm));
+
+    printf("\n=======================================================\n");
+    printf("              SYSTEM OPERATIONAL STATISTICS            \n");
+    printf("=======================================================\n");
+    printf("  Customers Registered   : %llu\n", (unsigned long long)stats.total_customers);
+    printf("  Bank Accounts          : %llu  (Active: %llu)\n",
+           (unsigned long long)stats.total_accounts, (unsigned long long)stats.active_accounts);
+    printf("  Debit Cards            : %llu  (Active: %llu, Blocked: %llu)\n",
+           (unsigned long long)stats.total_cards, (unsigned long long)stats.active_cards, (unsigned long long)stats.blocked_cards);
+    printf("-------------------------------------------------------\n");
+    printf("  Total Successful Txns  : %llu\n", (unsigned long long)stats.total_successful_txns);
+    printf("    - Deposits           : %llu txns  (%s)\n", (unsigned long long)stats.deposit_count, f_dep);
+    printf("    - Withdrawals        : %llu txns  (%s)\n", (unsigned long long)stats.withdrawal_count, f_wth);
+    printf("    - Fund Transfers     : %llu txns  (%s)\n", (unsigned long long)stats.transfer_count, f_trf);
+    printf("-------------------------------------------------------\n");
+    printf("  Total Cash in ATM Vault: %s\n", f_atm);
+    printf("=======================================================\n");
+    ui_pause();
+}
+
+void ui_handle_admin_dashboard(AdminSession *session)
+{
+    if (!session || !session->is_authenticated) return;
+
+    char choice_buf[16];
+    bool in_admin = true;
+
+    while (in_admin && session->is_authenticated) {
+        ui_print_admin_menu(session);
+
+        if (!fgets(choice_buf, sizeof(choice_buf), stdin)) {
+            break;
+        }
+        validation_trim(choice_buf);
+
+        if (strcmp(choice_buf, "1") == 0) {
+            ui_display_admin_customers(session);
+        } else if (strcmp(choice_buf, "2") == 0) {
+            ui_display_admin_accounts(session);
+        } else if (strcmp(choice_buf, "3") == 0) {
+            ui_display_admin_cards(session);
+        } else if (strcmp(choice_buf, "4") == 0) {
+            ui_handle_admin_block_card(session);
+        } else if (strcmp(choice_buf, "5") == 0) {
+            ui_handle_admin_unblock_card(session);
+        } else if (strcmp(choice_buf, "6") == 0) {
+            ui_display_admin_transactions(session);
+        } else if (strcmp(choice_buf, "7") == 0) {
+            ui_display_admin_cash_status(session);
+        } else if (strcmp(choice_buf, "8") == 0) {
+            ui_handle_admin_refill_cash(session);
+        } else if (strcmp(choice_buf, "9") == 0) {
+            ui_display_admin_statistics(session);
+        } else if (strcmp(choice_buf, "10") == 0) {
+            printf("\nAdministrator logged out.\n");
+            admin_logout(session);
+            in_admin = false;
+        } else {
+            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 10.\n", choice_buf);
+        }
+    }
+}
+

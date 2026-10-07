@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "auth.h"
+#include "admin.h"
 #include "deposit.h"
 #include "withdrawal.h"
 #include "transfer.h"
@@ -102,5 +103,20 @@ void ui_display_mini_statement(const CustomerSession *session, const StatementLi
  * Pause and prompt user to press enter to continue.
  */
 void ui_pause(void);
+
+/* Admin UI */
+void ui_print_top_menu(void);
+void ui_print_admin_menu(const AdminSession *session);
+bool ui_handle_admin_login(AdminSession *session);
+void ui_handle_admin_dashboard(AdminSession *session);
+void ui_display_admin_customers(const AdminSession *session);
+void ui_display_admin_accounts(const AdminSession *session);
+void ui_display_admin_cards(const AdminSession *session);
+void ui_handle_admin_block_card(const AdminSession *session);
+void ui_handle_admin_unblock_card(const AdminSession *session);
+void ui_display_admin_transactions(const AdminSession *session);
+void ui_display_admin_cash_status(const AdminSession *session);
+void ui_handle_admin_refill_cash(const AdminSession *session);
+void ui_display_admin_statistics(const AdminSession *session);
 
 #endif /* UI_H */

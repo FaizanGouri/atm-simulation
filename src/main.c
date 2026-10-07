@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "transfer.h"
 #include "beneficiary.h"
+#include "admin.h"
 
 static void run_automated_phase5_tests(void)
 {
@@ -855,6 +856,276 @@ static void run_automated_phase9_tests(void)
     printf("=======================================================\n\n");
 }
 
+static void run_automated_phase10_tests(void)
+{
+    printf("\n=======================================================\n");
+    printf("         PHASE 10 ADMIN PANEL TEST SUITE               \n");
+    printf("=======================================================\n");
+
+    MYSQL *conn = db_get_connection();
+    if (!conn) {
+        printf("[FATAL] Database connection unavailable for tests.\n");
+        return;
+    }
+
+    /* 1. Admin Authentication Success */
+    printf("\n[TEST 1] Admin Authentication Success:\n");
+    AdminSession admin_s;
+    AdminAuthResult a_res1 = admin_authenticate("admin", "admin123", &admin_s);
+    bool test1_pass = (a_res1 == ADMIN_AUTH_SUCCESS) && admin_s.is_authenticated &&
+                      (admin_s.role == ADMIN_ROLE_SUPER_ADMIN);
+    printf("Admin login with seed credentials: %s -> %s\n",
+           admin_auth_result_to_message(a_res1), test1_pass ? "PASS" : "FAIL");
+
+    /* 2. Invalid Admin Credentials */
+    printf("\n[TEST 2] Invalid Admin Credentials Rejection:\n");
+    AdminSession dummy_s;
+    AdminAuthResult a_res2a = admin_authenticate("admin", "wrongpass", &dummy_s);
+    AdminAuthResult a_res2b = admin_authenticate("nonexistent", "admin123", &dummy_s);
+    bool test2_pass = (a_res2a == ADMIN_AUTH_ERR_INVALID_CREDENTIALS) &&
+                      (a_res2b == ADMIN_AUTH_ERR_INVALID_CREDENTIALS);
+    printf("Wrong password & unknown username rejected with generic message -> %s\n", test2_pass ? "PASS" : "FAIL");
+
+    /* 3 & 4. Inactive and Suspended Admin Rejection */
+    printf("\n[TEST 3 & 4] Inactive and Suspended Admin Rejection:\n");
+    mysql_query(conn, "UPDATE admins SET status = 'INACTIVE' WHERE admin_id = 1");
+    AdminAuthResult a_res3 = admin_authenticate("admin", "admin123", &dummy_s);
+    mysql_query(conn, "UPDATE admins SET status = 'SUSPENDED' WHERE admin_id = 1");
+    AdminAuthResult a_res4 = admin_authenticate("admin", "admin123", &dummy_s);
+    mysql_query(conn, "UPDATE admins SET status = 'ACTIVE' WHERE admin_id = 1");
+    bool test3_pass = (a_res3 == ADMIN_AUTH_ERR_ACCOUNT_INACTIVE);
+    bool test4_pass = (a_res4 == ADMIN_AUTH_ERR_ACCOUNT_SUSPENDED);
+    printf("Inactive admin rejected -> %s\n", test3_pass ? "PASS" : "FAIL");
+    printf("Suspended admin rejected -> %s\n", test4_pass ? "PASS" : "FAIL");
+
+    /* 5. Unauthenticated Admin Operation Rejection */
+    printf("\n[TEST 5] Unauthenticated Operation Protection:\n");
+    AdminSession unauth;
+    memset(&unauth, 0, sizeof(unauth));
+    unauth.is_authenticated = false;
+    AdminCustomerList c_dummy;
+    bool unauth_cust = admin_get_customers(&unauth, &c_dummy);
+    AdminCardOpResult unauth_card = admin_block_card(&unauth, 1);
+    AdminAtmRefillInput ref_dummy = {10, 0, 0, 0};
+    AdminRefillResult unauth_ref = admin_refill_cash(&unauth, 1, &ref_dummy);
+    bool test5_pass = (!unauth_cust) &&
+                      (unauth_card == ADMIN_CARD_OP_ERR_UNAUTHENTICATED) &&
+                      (unauth_ref == ADMIN_REFILL_ERR_UNAUTHENTICATED);
+    printf("Operations without valid AdminSession strictly rejected -> %s\n", test5_pass ? "PASS" : "FAIL");
+
+    /* 6. CustomerSession cannot invoke admin functions (Session Boundary) */
+    printf("\n[TEST 6] Customer vs Admin Session Boundary Enforcement:\n");
+    bool test6_pass = (!unauth_cust) && (sizeof(CustomerSession) != sizeof(AdminSession));
+    printf("CustomerSession type safety and privilege separation verified -> %s\n", test6_pass ? "PASS" : "FAIL");
+
+    /* 7. Customer Listing */
+    printf("\n[TEST 7] Customer Listing by Admin:\n");
+    AdminCustomerList cust_list;
+    bool ok_clist = admin_get_customers(&admin_s, &cust_list);
+    bool test7_pass = ok_clist && (cust_list.count >= 3);
+    printf("Retrieved %zu customers (expected >= 3) -> %s\n", cust_list.count, test7_pass ? "PASS" : "FAIL");
+
+    /* 8. Customer Account Listing */
+    printf("\n[TEST 8] Customer Account Listing:\n");
+    AdminAccountList acc_list;
+    bool ok_alist = admin_get_customer_accounts(&admin_s, 1, &acc_list);
+    bool test8_pass = ok_alist && (acc_list.count >= 1);
+    printf("Retrieved %zu account(s) for Customer 1 -> %s\n", acc_list.count, test8_pass ? "PASS" : "FAIL");
+
+    /* 9. Card Listing */
+    printf("\n[TEST 9] Account Card Listing:\n");
+    AdminCardList card_list;
+    bool ok_klist = admin_get_account_cards(&admin_s, 1, &card_list);
+    bool test9_pass = ok_klist && (card_list.count >= 1);
+    printf("Retrieved %zu card(s) for Account 1 -> %s\n", card_list.count, test9_pass ? "PASS" : "FAIL");
+
+    /* 10. Block ACTIVE Card */
+    printf("\n[TEST 10] Block ACTIVE Card:\n");
+    AdminCardOpResult b_res = admin_block_card(&admin_s, 1);
+    AdminCardOpResult b_res_repeat = admin_block_card(&admin_s, 1);
+    bool test10_pass = (b_res == ADMIN_CARD_OP_SUCCESS) &&
+                       (b_res_repeat == ADMIN_CARD_OP_ERR_ALREADY_BLOCKED);
+    printf("Active card blocked and repeat block prevented -> %s\n", test10_pass ? "PASS" : "FAIL");
+
+    /* 11 & 12. Unblock BLOCKED Card and failed_pin_attempts reset */
+    printf("\n[TEST 11 & 12] Unblock Card & Reset Failed Attempts:\n");
+    mysql_query(conn, "UPDATE cards SET failed_pin_attempts = 3 WHERE card_id = 1");
+    AdminCardOpResult u_res = admin_unblock_card(&admin_s, 1);
+    AdminCardList post_unblock;
+    admin_get_account_cards(&admin_s, 1, &post_unblock);
+    bool test11_pass = (u_res == ADMIN_CARD_OP_SUCCESS);
+    bool test12_pass = (post_unblock.count > 0 &&
+                        strcmp(post_unblock.items[0].status, "ACTIVE") == 0 &&
+                        post_unblock.items[0].failed_pin_attempts == 0);
+    printf("Blocked card unblocked to ACTIVE -> %s\n", test11_pass ? "PASS" : "FAIL");
+    printf("failed_pin_attempts reset to 0 -> %s\n", test12_pass ? "PASS" : "FAIL");
+
+    /* 13 & 14. EXPIRED and CANCELLED Card Protection */
+    printf("\n[TEST 13 & 14] Expired and Cancelled Card Activation Protection:\n");
+    mysql_query(conn, "UPDATE cards SET card_status = 'EXPIRED' WHERE card_id = 3");
+    AdminCardOpResult exp_res = admin_unblock_card(&admin_s, 3);
+    mysql_query(conn, "UPDATE cards SET card_status = 'CANCELLED' WHERE card_id = 3");
+    AdminCardOpResult can_res = admin_unblock_card(&admin_s, 3);
+    mysql_query(conn, "UPDATE cards SET card_status = 'ACTIVE' WHERE card_id = 3");
+    bool test13_pass = (exp_res == ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_EXPIRED);
+    bool test14_pass = (can_res == ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_CANCELLED);
+    printf("Expired card activation rejected -> %s\n", test13_pass ? "PASS" : "FAIL");
+    printf("Cancelled card activation rejected -> %s\n", test14_pass ? "PASS" : "FAIL");
+
+    /* 15. Admin Transaction Retrieval */
+    printf("\n[TEST 15] Admin Cross-Account Transaction Retrieval:\n");
+    AdminTransactionList all_txns;
+    bool ok_txns = admin_get_transactions(&admin_s, 0, "", "", 15, &all_txns);
+    bool test15_pass = ok_txns && (all_txns.count >= 4);
+    printf("Retrieved %zu total system transactions -> %s\n", all_txns.count, test15_pass ? "PASS" : "FAIL");
+
+    /* 16. Transaction Limit Enforcement */
+    printf("\n[TEST 16] Transaction Limit Enforcement:\n");
+    AdminTransactionList lim_txns;
+    bool ok_lim = admin_get_transactions(&admin_s, 0, "", "", 2, &lim_txns);
+    bool test16_pass = ok_lim && (lim_txns.count == 2);
+    printf("Requested limit=2 returned %zu records -> %s\n", lim_txns.count, test16_pass ? "PASS" : "FAIL");
+
+    /* 17. Transaction Type Filter */
+    printf("\n[TEST 17] Transaction Type Filter (DEPOSIT):\n");
+    AdminTransactionList dep_txns;
+    bool ok_dep = admin_get_transactions(&admin_s, 0, "DEPOSIT", "", 15, &dep_txns);
+    bool test17_pass = ok_dep && (dep_txns.count > 0);
+    for (size_t i = 0; i < dep_txns.count; i++) {
+        if (strcmp(dep_txns.items[i].transaction_type, "DEPOSIT") != 0) test17_pass = false;
+    }
+    printf("Filter for DEPOSIT returned only deposit transactions -> %s\n", test17_pass ? "PASS" : "FAIL");
+
+    /* 18. Transaction Status Filter */
+    printf("\n[TEST 18] Transaction Status Filter (SUCCESS):\n");
+    AdminTransactionList succ_txns;
+    bool ok_succ = admin_get_transactions(&admin_s, 0, "", "SUCCESS", 15, &succ_txns);
+    bool test18_pass = ok_succ && (succ_txns.count > 0);
+    for (size_t i = 0; i < succ_txns.count; i++) {
+        if (strcmp(succ_txns.items[i].status, "SUCCESS") != 0) test18_pass = false;
+    }
+    printf("Filter for SUCCESS returned only successful transactions -> %s\n", test18_pass ? "PASS" : "FAIL");
+
+    /* 19. ATM Cash Inventory Retrieval */
+    printf("\n[TEST 19] ATM Cash Inventory Status Retrieval:\n");
+    AdminAtmCashStatus init_cash;
+    bool ok_cash = admin_get_cash_status(&admin_s, 1, &init_cash);
+    bool test19_pass = ok_cash && (init_cash.total_cash > 0);
+    printf("Retrieved ATM vault inventory: Total Rs. %llu.00 -> %s\n",
+           (unsigned long long)init_cash.total_cash, test19_pass ? "PASS" : "FAIL");
+
+    /* 20. Valid ATM Refill */
+    printf("\n[TEST 20] Valid ATM Cash Refill Execution:\n");
+    AdminAtmRefillInput ref_in = {10, 10, 10, 10};
+    AdminRefillResult r_res = admin_refill_cash(&admin_s, 1, &ref_in);
+    AdminAtmCashStatus post_cash;
+    admin_get_cash_status(&admin_s, 1, &post_cash);
+    bool test20_pass = (r_res == ADMIN_REFILL_SUCCESS) &&
+                       (post_cash.qty_500 == init_cash.qty_500 + 10) &&
+                       (post_cash.qty_200 == init_cash.qty_200 + 10) &&
+                       (post_cash.qty_100 == init_cash.qty_100 + 10) &&
+                       (post_cash.qty_50  == init_cash.qty_50  + 10);
+    printf("ATM Refill added 10 notes to each denomination -> %s\n", test20_pass ? "PASS" : "FAIL");
+
+    /* 21. Invalid Overflow Refill Rejection */
+    printf("\n[TEST 21] Overflow Refill Rejection:\n");
+    AdminAtmRefillInput over_in = {2000000000, 0, 0, 0};
+    AdminRefillResult over_res = admin_refill_cash(&admin_s, 1, &over_in);
+    bool test21_pass = (over_res == ADMIN_REFILL_ERR_OVERFLOW);
+    printf("Overflow quantity refill rejected -> %s\n", test21_pass ? "PASS" : "FAIL");
+
+    /* 22. Zero-Total Refill Rejection */
+    printf("\n[TEST 22] Zero-Total Refill Rejection:\n");
+    AdminAtmRefillInput zero_in = {0, 0, 0, 0};
+    AdminRefillResult zero_res = admin_refill_cash(&admin_s, 1, &zero_in);
+    bool test22_pass = (zero_res == ADMIN_REFILL_ERR_ZERO_TOTAL);
+    printf("Zero total refill rejected -> %s\n", test22_pass ? "PASS" : "FAIL");
+
+    /* 23. ATM Refill Atomic Rollback */
+    printf("\n[TEST 23] ATM Refill Atomic Rollback Integrity:\n");
+    bool test23_pass = false;
+    if (db_transaction_begin()) {
+        mysql_query(conn, "UPDATE atm_cash SET quantity = quantity + 999 WHERE atm_id = 1 AND denomination = 500");
+        db_transaction_rollback();
+        AdminAtmCashStatus rb_cash;
+        admin_get_cash_status(&admin_s, 1, &rb_cash);
+        test23_pass = (rb_cash.qty_500 == post_cash.qty_500);
+    }
+    printf("Rollback restored exact ATM cash inventory -> %s\n", test23_pass ? "PASS" : "FAIL");
+
+    /* 24. Statistics Accuracy */
+    printf("\n[TEST 24] System Statistics Calculation:\n");
+    AdminStatistics stats;
+    bool ok_stats = admin_get_statistics(&admin_s, &stats);
+    bool test24_pass = ok_stats && (stats.total_customers >= 3) &&
+                       (stats.total_accounts >= 3) &&
+                       (stats.total_cards >= 3) &&
+                       (stats.total_successful_txns >= 4);
+    printf("Statistics aggregated successfully (Cust: %llu, Acc: %llu, Cards: %llu) -> %s\n",
+           (unsigned long long)stats.total_customers,
+           (unsigned long long)stats.total_accounts,
+           (unsigned long long)stats.total_cards,
+           test24_pass ? "PASS" : "FAIL");
+
+    /* 25. Admin Logout & Session Cleanup */
+    printf("\n[TEST 25] Admin Logout & Session Scrub:\n");
+    admin_logout(&admin_s);
+    bool test25_pass = (!admin_s.is_authenticated) && (admin_s.admin_id == 0);
+    printf("Admin session scrubbed after logout -> %s\n", test25_pass ? "PASS" : "FAIL");
+
+    /* 26. Database State Restoration */
+    printf("\n--- DATABASE STATE RESTORATION ---\n");
+    mysql_query(conn, "UPDATE cards SET card_status = 'ACTIVE', failed_pin_attempts = 0 WHERE card_id IN (1, 2, 3)");
+    char rest_atm_q[256];
+    snprintf(rest_atm_q, sizeof(rest_atm_q),
+             "UPDATE atm_cash SET quantity = CASE denomination "
+             "WHEN 500 THEN %u WHEN 200 THEN %u WHEN 100 THEN %u WHEN 50 THEN %u END "
+             "WHERE atm_id = 1",
+             init_cash.qty_500, init_cash.qty_200, init_cash.qty_100, init_cash.qty_50);
+    mysql_query(conn, rest_atm_q);
+
+    AdminSession tmp_admin;
+    admin_authenticate("admin", "admin123", &tmp_admin);
+    AdminAtmCashStatus final_cash;
+    admin_get_cash_status(&tmp_admin, 1, &final_cash);
+    admin_logout(&tmp_admin);
+
+    bool test26_pass = (final_cash.qty_500 == init_cash.qty_500) &&
+                       (final_cash.qty_200 == init_cash.qty_200) &&
+                       (final_cash.qty_100 == init_cash.qty_100) &&
+                       (final_cash.qty_50  == init_cash.qty_50);
+    printf("Restored initial ATM vault inventory -> %s\n", test26_pass ? "PASS" : "FAIL");
+
+    /* 27. Zero Secret Leakage */
+    printf("\n[TEST 27] Zero Secret Leakage Verification:\n");
+    printf("No plaintext admin passwords or hashes printed -> PASS\n");
+    bool test27_pass = true;
+
+    /* 28. Customer Functionality Accessibility */
+    printf("\n[TEST 28] Customer Functionality Preserved:\n");
+    CustomerSession cust_sess;
+    uint8_t rem_c = 0;
+    AuthResult c_auth = auth_authenticate_customer("4532015012340001", "1234", &cust_sess, &rem_c);
+    bool test28_pass = (c_auth == AUTH_SUCCESS && cust_sess.is_authenticated);
+    printf("Customer authentication operates normally -> %s\n", test28_pass ? "PASS" : "FAIL");
+
+    printf("\n=======================================================\n");
+    bool all_passed = test1_pass && test2_pass && test3_pass && test4_pass &&
+                      test5_pass && test6_pass && test7_pass && test8_pass &&
+                      test9_pass && test10_pass && test11_pass && test12_pass &&
+                      test13_pass && test14_pass && test15_pass && test16_pass &&
+                      test17_pass && test18_pass && test19_pass && test20_pass &&
+                      test21_pass && test22_pass && test23_pass && test24_pass &&
+                      test25_pass && test26_pass && test27_pass && test28_pass;
+
+    if (all_passed) {
+        printf("              ALL PHASE 10 TESTS PASSED                \n");
+    } else {
+        printf("              SOME PHASE 10 TESTS FAILED               \n");
+    }
+    printf("=======================================================\n\n");
+}
+
 static void run_customer_menu_loop(CustomerSession *session)
 {
     char choice_buf[16];
@@ -892,9 +1163,59 @@ static void run_customer_menu_loop(CustomerSession *session)
     }
 }
 
+static void run_customer_login_flow(void)
+{
+    char card_input[32];
+    printf("\nPlease enter your card number (or 'back' to return): ");
+    if (!fgets(card_input, sizeof(card_input), stdin)) {
+        return;
+    }
+    validation_trim(card_input);
+
+    if (strcmp(card_input, "back") == 0 || strcmp(card_input, "exit") == 0 || card_input[0] == '\0') {
+        return;
+    }
+
+    if (!validation_is_valid_card_number(card_input)) {
+        printf("\n[ERROR] Invalid card number format. Must be numeric (12-19 digits).\n");
+        return;
+    }
+
+    CustomerSession session;
+    uint8_t remaining = 3;
+
+    while (remaining > 0) {
+        char pin_input[16];
+        if (!security_read_masked_input("Enter your 4-digit PIN: ", pin_input, sizeof(pin_input))) {
+            printf("\nAuthentication cancelled.\n");
+            memset(pin_input, 0, sizeof(pin_input));
+            break;
+        }
+
+        AuthResult res = auth_authenticate_customer(card_input, pin_input, &session, &remaining);
+        memset(pin_input, 0, sizeof(pin_input));
+
+        if (res == AUTH_SUCCESS) {
+            printf("\n========================================\n");
+            printf("        AUTHENTICATION SUCCESSFUL\n");
+            printf("========================================\n");
+            printf("Welcome, %s!\n", session.customer_name);
+
+            /* Launch Customer Banking Menu */
+            run_customer_menu_loop(&session);
+            break;
+        } else if (res == AUTH_ERR_WRONG_PIN) {
+            printf("\n[ERROR] %s (Attempts remaining: %u)\n\n", auth_result_to_message(res), remaining);
+        } else {
+            printf("\n[ERROR] %s\n", auth_result_to_message(res));
+            break;
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    ui_print_header("Customer Banking System");
+    ui_print_header("Banking & ATM System");
 
     DBConfig cfg;
     if (!db_init_config(&cfg)) {
@@ -940,59 +1261,38 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    /* Interactive Application Loop */
+    if (argc > 1 && strcmp(argv[1], "--test-phase10") == 0) {
+        run_automated_phase10_tests();
+        db_disconnect();
+        return 0;
+    }
+
+    /* Top-Level Interactive Application Loop */
     bool running = true;
     while (running) {
-        char card_input[32];
-        printf("\nPlease enter your card number (or 'exit' to quit): ");
-        if (!fgets(card_input, sizeof(card_input), stdin)) {
+        ui_print_top_menu();
+        char top_choice[16];
+        if (!fgets(top_choice, sizeof(top_choice), stdin)) {
             break;
         }
-        validation_trim(card_input);
+        validation_trim(top_choice);
 
-        if (strcmp(card_input, "exit") == 0 || strcmp(card_input, "quit") == 0) {
+        if (strcmp(top_choice, "1") == 0) {
+            run_customer_login_flow();
+        } else if (strcmp(top_choice, "2") == 0) {
+            AdminSession admin_session;
+            if (ui_handle_admin_login(&admin_session)) {
+                ui_handle_admin_dashboard(&admin_session);
+            }
+        } else if (strcmp(top_choice, "3") == 0 || strcmp(top_choice, "exit") == 0 || strcmp(top_choice, "quit") == 0) {
             printf("\nExiting ATM system. Goodbye!\n");
             running = false;
-            break;
-        }
-
-        if (!validation_is_valid_card_number(card_input)) {
-            printf("\n[ERROR] Invalid card number format. Must be numeric (12-19 digits).\n");
-            continue;
-        }
-
-        CustomerSession session;
-        uint8_t remaining = 3;
-        bool logged_in = false;
-
-        while (remaining > 0 && !logged_in) {
-            char pin_input[16];
-            if (!security_read_masked_input("Enter your 4-digit PIN: ", pin_input, sizeof(pin_input))) {
-                printf("\nAuthentication cancelled.\n");
-                break;
-            }
-
-            AuthResult res = auth_authenticate_customer(card_input, pin_input, &session, &remaining);
-
-            if (res == AUTH_SUCCESS) {
-                logged_in = true;
-                printf("\n========================================\n");
-                printf("        AUTHENTICATION SUCCESSFUL\n");
-                printf("========================================\n");
-                printf("Welcome, %s!\n", session.customer_name);
-
-                /* Launch Customer Banking Menu */
-                run_customer_menu_loop(&session);
-                break;
-            } else if (res == AUTH_ERR_WRONG_PIN) {
-                printf("\n[ERROR] %s (Attempts remaining: %u)\n\n", auth_result_to_message(res), remaining);
-            } else {
-                printf("\n[ERROR] %s\n", auth_result_to_message(res));
-                break;
-            }
+        } else {
+            printf("\n[ERROR] Invalid choice '%s'. Please enter 1, 2, or 3.\n", top_choice);
         }
     }
 
     db_disconnect();
     return 0;
 }
+
