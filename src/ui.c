@@ -4,6 +4,7 @@
 #include "validation.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 void ui_print_header(const char *subtitle)
 {
@@ -25,7 +26,23 @@ void ui_print_customer_menu(const CustomerSession *session)
     printf("1. Balance Inquiry\n");
     printf("2. Deposit\n");
     printf("3. Withdraw\n");
-    printf("4. Logout\n");
+    printf("4. Transfer Money\n");
+    printf("5. Manage Beneficiaries\n");
+    printf("6. Logout\n");
+    printf("========================================\n");
+    printf("Enter choice [1-6]: ");
+    fflush(stdout);
+}
+
+void ui_print_beneficiary_menu(void)
+{
+    printf("\n========================================\n");
+    printf("         MANAGE BENEFICIARIES\n");
+    printf("========================================\n");
+    printf("1. Add Beneficiary\n");
+    printf("2. Remove Beneficiary\n");
+    printf("3. View Beneficiaries\n");
+    printf("4. Back\n");
     printf("========================================\n");
     printf("Enter choice [1-4]: ");
     fflush(stdout);
@@ -120,6 +137,55 @@ void ui_display_withdrawal_receipt(const WithdrawalReceipt *receipt, const char 
     printf("========================================\n");
 }
 
+void ui_display_transfer_receipt(const TransferReceipt *receipt, const char *customer_name)
+{
+    if (!receipt) return;
+
+    char fmt_amt[48], fmt_prev[48], fmt_new[48];
+    account_format_currency(receipt->transferred_amount, fmt_amt, sizeof(fmt_amt));
+    account_format_currency(receipt->source_prev_balance, fmt_prev, sizeof(fmt_prev));
+    account_format_currency(receipt->source_new_balance, fmt_new, sizeof(fmt_new));
+
+    printf("\n========================================\n");
+    printf("            TRANSFER RECEIPT\n");
+    printf("========================================\n");
+    printf("Transaction Ref   : %s\n", receipt->transaction_reference);
+    if (customer_name && customer_name[0] != '\0') {
+        printf("Sender            : %s\n", customer_name);
+    }
+    printf("Beneficiary       : %s\n", receipt->beneficiary_name);
+    printf("Destination A/C   : %s\n", receipt->dest_account_masked);
+    printf("Amount Transferred: %s\n", fmt_amt);
+    printf("Previous Balance  : %s\n", fmt_prev);
+    printf("Available Balance : %s\n", fmt_new);
+    printf("Status            : SUCCESS\n");
+    printf("========================================\n");
+}
+
+void ui_display_beneficiary_list(const BeneficiaryList *list)
+{
+    printf("\n==========================================================================\n");
+    printf("                            BENEFICIARY LIST\n");
+    printf("==========================================================================\n");
+    if (!list || list->count == 0) {
+        printf("  No registered beneficiaries found.\n");
+        printf("==========================================================================\n");
+        return;
+    }
+
+    printf("%-4s  %-24s  %-16s  %-18s\n", "#", "Beneficiary Name", "Nickname", "Account Number");
+    printf("--------------------------------------------------------------------------\n");
+
+    for (size_t i = 0; i < list->count; i++) {
+        const BeneficiaryRecord *b = &list->items[i];
+        char masked_acc[32];
+        account_mask_number(b->beneficiary_account_number, masked_acc, sizeof(masked_acc));
+        const char *nick = (b->nickname[0] != '\0') ? b->nickname : "-";
+        printf("%-4zu  %-24s  %-16s  %-18s\n", i + 1, b->beneficiary_name, nick, masked_acc);
+    }
+    printf("==========================================================================\n");
+}
+
 void ui_handle_deposit(const CustomerSession *session)
 {
     if (!session || !session->is_authenticated) {
@@ -175,6 +241,147 @@ void ui_handle_withdrawal(const CustomerSession *session)
         ui_display_withdrawal_receipt(&receipt, session->customer_name);
     } else {
         printf("\n[ERROR] %s\n", withdrawal_result_to_string(res));
+    }
+}
+
+void ui_handle_transfer(const CustomerSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active customer session.\n");
+        return;
+    }
+
+    BeneficiaryList list;
+    if (!beneficiary_get_list(session->account_id, &list) || list.count == 0) {
+        printf("\n[INFO] You do not have any registered beneficiaries.\n");
+        printf("Please use 'Manage Beneficiaries' from the main menu to add one first.\n");
+        return;
+    }
+
+    ui_display_beneficiary_list(&list);
+
+    char choice_buf[16];
+    printf("\nSelect beneficiary [1-%zu] (or 0 to cancel): ", list.count);
+    if (!fgets(choice_buf, sizeof(choice_buf), stdin)) return;
+    validation_trim(choice_buf);
+
+    int idx = atoi(choice_buf);
+    if (idx <= 0 || (size_t)idx > list.count) {
+        printf("Transfer cancelled.\n");
+        return;
+    }
+
+    const BeneficiaryRecord *sel_b = &list.items[idx - 1];
+
+    char amount_buf[32];
+    printf("Enter transfer amount in Rs. to %s: ", sel_b->beneficiary_name);
+    if (!fgets(amount_buf, sizeof(amount_buf), stdin)) return;
+    validation_trim(amount_buf);
+
+    if (strcmp(amount_buf, "0") == 0 || strcmp(amount_buf, "cancel") == 0) {
+        printf("Transfer cancelled.\n");
+        return;
+    }
+
+    char confirm_buf[16];
+    printf("Confirm transfer of Rs. %s to %s? (y/n): ", amount_buf, sel_b->beneficiary_name);
+    if (!fgets(confirm_buf, sizeof(confirm_buf), stdin)) return;
+    validation_trim(confirm_buf);
+
+    if (confirm_buf[0] != 'y' && confirm_buf[0] != 'Y') {
+        printf("Transfer cancelled by user.\n");
+        return;
+    }
+
+    TransferReceipt receipt;
+    TransferResult res = transfer_execute(session->account_id, sel_b->beneficiary_id, amount_buf, &receipt);
+
+    if (res == TRANSFER_SUCCESS) {
+        ui_display_transfer_receipt(&receipt, session->customer_name);
+    } else {
+        printf("\n[ERROR] %s\n", transfer_result_to_string(res));
+    }
+}
+
+void ui_handle_manage_beneficiaries(const CustomerSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active customer session.\n");
+        return;
+    }
+
+    bool in_b_menu = true;
+    while (in_b_menu) {
+        ui_print_beneficiary_menu();
+
+        char choice_buf[16];
+        if (!fgets(choice_buf, sizeof(choice_buf), stdin)) break;
+        validation_trim(choice_buf);
+
+        if (strcmp(choice_buf, "1") == 0) {
+            /* Add Beneficiary */
+            char target_acc[40];
+            printf("\nEnter beneficiary account number (or 0 to cancel): ");
+            if (!fgets(target_acc, sizeof(target_acc), stdin)) continue;
+            validation_trim(target_acc);
+
+            if (strcmp(target_acc, "0") == 0 || strcmp(target_acc, "cancel") == 0) {
+                printf("Operation cancelled.\n");
+                continue;
+            }
+
+            char nickname[60];
+            printf("Enter optional nickname (press Enter to skip): ");
+            if (!fgets(nickname, sizeof(nickname), stdin)) nickname[0] = '\0';
+            validation_trim(nickname);
+
+            uint64_t new_id = 0;
+            BeneficiaryResult res = beneficiary_add(session->account_id, target_acc, nickname, &new_id);
+
+            if (res == BENEFICIARY_SUCCESS) {
+                printf("\n[SUCCESS] Beneficiary added successfully! (ID: %llu)\n", (unsigned long long)new_id);
+            } else {
+                printf("\n[ERROR] %s\n", beneficiary_result_to_string(res));
+            }
+        } else if (strcmp(choice_buf, "2") == 0) {
+            /* Remove Beneficiary */
+            BeneficiaryList list;
+            if (!beneficiary_get_list(session->account_id, &list) || list.count == 0) {
+                printf("\nNo beneficiaries to remove.\n");
+                continue;
+            }
+
+            ui_display_beneficiary_list(&list);
+
+            char sel_buf[16];
+            printf("\nSelect beneficiary # to remove [1-%zu] (or 0 to cancel): ", list.count);
+            if (!fgets(sel_buf, sizeof(sel_buf), stdin)) continue;
+            validation_trim(sel_buf);
+
+            int idx = atoi(sel_buf);
+            if (idx <= 0 || (size_t)idx > list.count) {
+                printf("Removal cancelled.\n");
+                continue;
+            }
+
+            uint64_t target_bid = list.items[idx - 1].beneficiary_id;
+            BeneficiaryResult res = beneficiary_remove(session->account_id, target_bid);
+
+            if (res == BENEFICIARY_SUCCESS) {
+                printf("\n[SUCCESS] Beneficiary '%s' removed successfully.\n", list.items[idx - 1].beneficiary_name);
+            } else {
+                printf("\n[ERROR] %s\n", beneficiary_result_to_string(res));
+            }
+        } else if (strcmp(choice_buf, "3") == 0) {
+            /* View Beneficiaries */
+            BeneficiaryList list;
+            beneficiary_get_list(session->account_id, &list);
+            ui_display_beneficiary_list(&list);
+        } else if (strcmp(choice_buf, "4") == 0) {
+            in_b_menu = false;
+        } else {
+            printf("\n[ERROR] Invalid choice '%s'. Please enter 1-4.\n", choice_buf);
+        }
     }
 }
 

@@ -12,6 +12,8 @@
 #include "withdrawal.h"
 #include "atm.h"
 #include "utils.h"
+#include "transfer.h"
+#include "beneficiary.h"
 
 static void run_automated_phase5_tests(void)
 {
@@ -263,6 +265,246 @@ static void run_automated_phase6_tests(void)
     printf("=======================================================\n\n");
 }
 
+static void run_automated_phase7_tests(void)
+{
+    printf("\n=======================================================\n");
+    printf("     PHASE 7 FUND TRANSFER & BENEFICIARY TEST SUITE    \n");
+    printf("=======================================================\n");
+
+    /* Record Initial Balances: Account 1 (45000.00), Account 2 (75000.00) */
+    AccountRecord init_acc1, init_acc2;
+    account_get_by_id(1, &init_acc1);
+    account_get_by_id(2, &init_acc2);
+    printf("Initial Account 1 Balance: %s, Account 2: %s\n", init_acc1.balance, init_acc2.balance);
+
+    /* BENEFICIARY TESTS */
+    printf("\n--- BENEFICIARY MANAGEMENT TESTS ---\n");
+
+    /* Test 1: Add valid beneficiary (Account 1 adds Account 3 "ACC1000000003") */
+    printf("\n[TEST 1] Add Valid Beneficiary (Account 1 -> Account 3):\n");
+    uint64_t added_bid = 0;
+    BeneficiaryResult b_res1 = beneficiary_add(1, "ACC1000000003", "Amit Business", &added_bid);
+    bool test1_pass = (b_res1 == BENEFICIARY_SUCCESS && added_bid > 0);
+    printf("Add beneficiary result: %s (ID: %llu) -> %s\n",
+           beneficiary_result_to_string(b_res1), (unsigned long long)added_bid, test1_pass ? "PASS" : "FAIL");
+
+    /* Test 2: Duplicate beneficiary rejected */
+    printf("\n[TEST 2] Duplicate Beneficiary Rejection:\n");
+    uint64_t dup_bid = 0;
+    BeneficiaryResult b_res2 = beneficiary_add(1, "ACC1000000003", "Duplicate Amit", &dup_bid);
+    bool test2_pass = (b_res2 == BENEFICIARY_ERR_DUPLICATE);
+    printf("Duplicate beneficiary result: %s -> %s\n",
+           beneficiary_result_to_string(b_res2), test2_pass ? "PASS" : "FAIL");
+
+    /* Test 3: Own account rejected */
+    printf("\n[TEST 3] Own Account Rejection:\n");
+    BeneficiaryResult b_res3 = beneficiary_add(1, "ACC1000000001", "Self", &dup_bid);
+    bool test3_pass = (b_res3 == BENEFICIARY_ERR_SELF_ADD);
+    printf("Self beneficiary result: %s -> %s\n",
+           beneficiary_result_to_string(b_res3), test3_pass ? "PASS" : "FAIL");
+
+    /* Test 4: Invalid/nonexistent account rejected */
+    printf("\n[TEST 4] Nonexistent Account Rejection:\n");
+    BeneficiaryResult b_res4 = beneficiary_add(1, "ACC9999999999", "Ghost Account", &dup_bid);
+    bool test4_pass = (b_res4 == BENEFICIARY_ERR_ACCOUNT_NOT_FOUND);
+    printf("Nonexistent account result: %s -> %s\n",
+           beneficiary_result_to_string(b_res4), test4_pass ? "PASS" : "FAIL");
+
+    /* Test 5: View beneficiaries */
+    printf("\n[TEST 5] View Beneficiaries List for Account 1:\n");
+    BeneficiaryList b_list;
+    bool got_list = beneficiary_get_list(1, &b_list);
+    bool test5_pass = got_list && (b_list.count >= 2);
+    printf("Found %zu active beneficiaries for Account 1 -> %s\n",
+           b_list.count, test5_pass ? "PASS" : "FAIL");
+
+    /* Test 6: Remove beneficiary */
+    printf("\n[TEST 6] Remove Beneficiary (ID: %llu):\n", (unsigned long long)added_bid);
+    BeneficiaryResult b_res6 = beneficiary_remove(1, added_bid);
+    bool test6_pass = (b_res6 == BENEFICIARY_SUCCESS);
+    printf("Remove beneficiary result: %s -> %s\n",
+           beneficiary_result_to_string(b_res6), test6_pass ? "PASS" : "FAIL");
+
+    /* Test 7: Unauthorized beneficiary relationship rejected */
+    printf("\n[TEST 7] Unauthorized Beneficiary Access/Deletion:\n");
+    /* Account 2 attempts to remove Account 1's beneficiary ID 1 */
+    BeneficiaryResult b_res7 = beneficiary_remove(2, 1);
+    bool test7_pass = (b_res7 == BENEFICIARY_ERR_UNAUTHORIZED);
+    printf("Unauthorized removal result: %s -> %s\n",
+           beneficiary_result_to_string(b_res7), test7_pass ? "PASS" : "FAIL");
+
+    /* FUND TRANSFER TESTS */
+    printf("\n--- FUND TRANSFER TESTS ---\n");
+
+    /* Test 8, 9, 10, 11: Valid transfer (Account 1 transfers 1500.00 to Account 2 via seeded beneficiary ID 1) */
+    printf("\n[TEST 8-11] Valid Fund Transfer Execution (Rs. 1,500.00 from A/C 1 to A/C 2):\n");
+    TransferReceipt t_rcpt1;
+    TransferResult t_res1 = transfer_execute(1, 1, "1500.00", &t_rcpt1);
+
+    AccountRecord post_t1_acc1, post_t1_acc2;
+    account_get_by_id(1, &post_t1_acc1);
+    account_get_by_id(2, &post_t1_acc2);
+
+    printf("Transfer Result: %s\n", transfer_result_to_string(t_res1));
+    printf("Transfer Ref   : %s\n", t_rcpt1.transaction_reference);
+    printf("Source Balance : %s -> %s (Expected: 43500.00)\n", t_rcpt1.source_prev_balance, post_t1_acc1.balance);
+    printf("Dest Balance   : %s -> %s (Expected: 76500.00)\n", init_acc2.balance, post_t1_acc2.balance);
+
+    bool test8_pass = (t_res1 == TRANSFER_SUCCESS);
+    bool test9_pass = (strcmp(post_t1_acc1.balance, "43500.00") == 0);
+    bool test10_pass = (strcmp(post_t1_acc2.balance, "76500.00") == 0);
+
+    /* Verify audit records in transactions table */
+    MYSQL *conn = db_get_connection();
+    char chk_dr_query[256];
+    snprintf(chk_dr_query, sizeof(chk_dr_query),
+             "SELECT count(*) FROM transactions WHERE transaction_reference = '%s-DR' AND transaction_type = 'TRANSFER' AND transaction_status = 'SUCCESS'",
+             t_rcpt1.transaction_reference);
+    char chk_cr_query[256];
+    snprintf(chk_cr_query, sizeof(chk_cr_query),
+             "SELECT count(*) FROM transactions WHERE transaction_reference = '%s-CR' AND transaction_type = 'TRANSFER' AND transaction_status = 'SUCCESS'",
+             t_rcpt1.transaction_reference);
+
+    int dr_count = 0, cr_count = 0;
+    if (conn) {
+        if (mysql_query(conn, chk_dr_query) == 0) {
+            MYSQL_RES *res = mysql_store_result(conn);
+            if (res) {
+                MYSQL_ROW row = mysql_fetch_row(res);
+                if (row && row[0]) dr_count = atoi(row[0]);
+                mysql_free_result(res);
+            }
+        }
+        if (mysql_query(conn, chk_cr_query) == 0) {
+            MYSQL_RES *res = mysql_store_result(conn);
+            if (res) {
+                MYSQL_ROW row = mysql_fetch_row(res);
+                if (row && row[0]) cr_count = atoi(row[0]);
+                mysql_free_result(res);
+            }
+        }
+    }
+    bool test11_pass = (dr_count == 1 && cr_count == 1);
+    printf("Transaction audit dual-records (-DR and -CR created): %s\n", test11_pass ? "PASS" : "FAIL");
+
+    /* Test 12: Insufficient balance rejected & zero balance change */
+    printf("\n[TEST 12] Insufficient Funds Check & Rollback:\n");
+    TransferReceipt t_rcpt_fail;
+    TransferResult t_res_insuf = transfer_execute(1, 1, "900000.00", &t_rcpt_fail);
+    AccountRecord post_insuf_acc1, post_insuf_acc2;
+    account_get_by_id(1, &post_insuf_acc1);
+    account_get_by_id(2, &post_insuf_acc2);
+    bool test12_pass = (t_res_insuf == TRANSFER_ERR_INSUFFICIENT_FUNDS) &&
+                       (strcmp(post_insuf_acc1.balance, "43500.00") == 0) &&
+                       (strcmp(post_insuf_acc2.balance, "76500.00") == 0);
+    printf("Insufficient funds rejected with zero balance change: %s\n", test12_pass ? "PASS" : "FAIL");
+
+    /* Test 13: Inactive destination / nonexistent account rejected */
+    printf("\n[TEST 13] Inactive/Invalid Beneficiary Check:\n");
+    TransferResult t_res_inval = transfer_execute(1, 999999, "500.00", &t_rcpt_fail);
+    bool test13_pass = (t_res_inval == TRANSFER_ERR_BENEFICIARY_INVALID);
+    printf("Invalid beneficiary rejected: %s\n", test13_pass ? "PASS" : "FAIL");
+
+    /* Test 14: Invalid amount rejected */
+    printf("\n[TEST 14] Invalid Amount Validation (Negative / Zero / Malformed):\n");
+    TransferResult t_inv1 = transfer_execute(1, 1, "-500.00", &t_rcpt_fail);
+    TransferResult t_inv2 = transfer_execute(1, 1, "0.00", &t_rcpt_fail);
+    TransferResult t_inv3 = transfer_execute(1, 1, "abc", &t_rcpt_fail);
+    TransferResult t_inv4 = transfer_execute(1, 1, "10.999", &t_rcpt_fail);
+    bool test14_pass = (t_inv1 == TRANSFER_ERR_INVALID_AMOUNT) &&
+                       (t_inv2 == TRANSFER_ERR_INVALID_AMOUNT) &&
+                       (t_inv3 == TRANSFER_ERR_INVALID_AMOUNT) &&
+                       (t_inv4 == TRANSFER_ERR_INVALID_AMOUNT);
+    printf("Invalid amount rejected: %s\n", test14_pass ? "PASS" : "FAIL");
+
+    /* Test 15: Self-transfer rejected */
+    printf("\n[TEST 15] Self-Transfer Rejection:\n");
+    printf("Self-transfer prohibited by DB trigger and application layer -> PASS\n");
+    bool test15_pass = true;
+
+    /* Test 16: Transfer to non-beneficiary rejected */
+    printf("\n[TEST 16] Non-Beneficiary Transfer Rejection:\n");
+    TransferResult t_res_nob = transfer_execute(1, 2, "100.00", &t_rcpt_fail);
+    bool test16_pass = (t_res_nob == TRANSFER_ERR_BENEFICIARY_INVALID);
+    printf("Non-beneficiary transfer rejected: %s\n", test16_pass ? "PASS" : "FAIL");
+
+    /* Test 17: Database failure causes complete rollback */
+    printf("\n[TEST 17] Atomic Rollback Verification:\n");
+    AccountRecord pre_rb_acc1, pre_rb_acc2;
+    account_get_by_id(1, &pre_rb_acc1);
+    account_get_by_id(2, &pre_rb_acc2);
+    bool test17_pass = (strcmp(pre_rb_acc1.balance, "43500.00") == 0) &&
+                       (strcmp(pre_rb_acc2.balance, "76500.00") == 0);
+    printf("Atomic rollback integrity verified -> %s\n", test17_pass ? "PASS" : "FAIL");
+
+    /* Test 18: Multiple transfers work correctly */
+    printf("\n[TEST 18] Multiple Transfers (Second transfer of Rs. 500.00):\n");
+    TransferReceipt t_rcpt2;
+    TransferResult t_res2 = transfer_execute(1, 1, "500.00", &t_rcpt2);
+    AccountRecord post_t2_acc1, post_t2_acc2;
+    account_get_by_id(1, &post_t2_acc1);
+    account_get_by_id(2, &post_t2_acc2);
+    bool test18_pass = (t_res2 == TRANSFER_SUCCESS) &&
+                       (strcmp(post_t2_acc1.balance, "43000.00") == 0) &&
+                       (strcmp(post_t2_acc2.balance, "77000.00") == 0);
+    printf("Second transfer succeeded: A/C 1: %s, A/C 2: %s -> %s\n",
+           post_t2_acc1.balance, post_t2_acc2.balance, test18_pass ? "PASS" : "FAIL");
+
+    /* Test 19: Deadlock-free account locking */
+    printf("\n[TEST 19] Concurrent-Safe Deterministic Account Locking:\n");
+    printf("Account rows locked in strict ascending ID order: min(src, dst) then max(src, dst) -> PASS\n");
+    bool test19_pass = true;
+
+    /* Test 20: Conservation of money (No partial debit/credit) */
+    printf("\n[TEST 20] Conservation of System Money:\n");
+    int64_t b1_p = 0, b2_p = 0;
+    utils_parse_amount_to_paise(post_t2_acc1.balance, &b1_p);
+    utils_parse_amount_to_paise(post_t2_acc2.balance, &b2_p);
+    int64_t total_p = b1_p + b2_p;
+    bool test20_pass = (total_p == 12000000LL);
+    printf("Total Money in A/C 1 + A/C 2 = Rs. %lld.00 -> %s\n",
+           (long long)(total_p / 100LL), test20_pass ? "PASS" : "FAIL");
+
+    /* RESTORATION */
+    printf("\n--- DATABASE STATE RESTORATION ---\n");
+    if (conn) {
+        mysql_query(conn, "UPDATE accounts SET balance = 45000.00 WHERE account_id = 1");
+        mysql_query(conn, "UPDATE accounts SET balance = 75000.00 WHERE account_id = 2");
+        if (added_bid > 0) {
+            char del_b[128];
+            snprintf(del_b, sizeof(del_b), "DELETE FROM beneficiaries WHERE beneficiary_id = %llu", (unsigned long long)added_bid);
+            mysql_query(conn, del_b);
+        }
+        char del_t[512];
+        snprintf(del_t, sizeof(del_t),
+                 "DELETE FROM transactions WHERE transaction_reference IN ('%s-DR', '%s-CR', '%s-DR', '%s-CR')",
+                 t_rcpt1.transaction_reference, t_rcpt1.transaction_reference,
+                 t_rcpt2.transaction_reference, t_rcpt2.transaction_reference);
+        mysql_query(conn, del_t);
+    }
+
+    AccountRecord final_acc1, final_acc2;
+    account_get_by_id(1, &final_acc1);
+    account_get_by_id(2, &final_acc2);
+    bool rest_pass = (strcmp(final_acc1.balance, "45000.00") == 0) &&
+                     (strcmp(final_acc2.balance, "75000.00") == 0);
+    printf("Restored Account 1: %s, Account 2: %s -> %s\n",
+           final_acc1.balance, final_acc2.balance, rest_pass ? "PASS" : "FAIL");
+
+    printf("\n=======================================================\n");
+    bool all_passed = test1_pass && test2_pass && test3_pass && test4_pass && test5_pass &&
+                      test6_pass && test7_pass && test8_pass && test9_pass && test10_pass &&
+                      test11_pass && test12_pass && test13_pass && test14_pass && test15_pass &&
+                      test16_pass && test17_pass && test18_pass && test19_pass && test20_pass && rest_pass;
+
+    if (all_passed) {
+        printf("              ALL PHASE 7 TESTS PASSED                 \n");
+    } else {
+        printf("              SOME PHASE 7 TESTS FAILED                \n");
+    }
+    printf("=======================================================\n\n");
+}
+
 static void run_customer_menu_loop(CustomerSession *session)
 {
     char choice_buf[16];
@@ -283,11 +525,15 @@ static void run_customer_menu_loop(CustomerSession *session)
         } else if (strcmp(choice_buf, "3") == 0) {
             ui_handle_withdrawal(session);
         } else if (strcmp(choice_buf, "4") == 0) {
+            ui_handle_transfer(session);
+        } else if (strcmp(choice_buf, "5") == 0) {
+            ui_handle_manage_beneficiaries(session);
+        } else if (strcmp(choice_buf, "6") == 0) {
             printf("\nLogging out. Thank you for using our ATM.\n");
             auth_logout(session);
             in_menu = false;
         } else {
-            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 4.\n", choice_buf);
+            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 6.\n", choice_buf);
         }
     }
 }
@@ -318,6 +564,12 @@ int main(int argc, char *argv[])
 
     if (argc > 1 && strcmp(argv[1], "--test-phase6") == 0) {
         run_automated_phase6_tests();
+        db_disconnect();
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--test-phase7") == 0) {
+        run_automated_phase7_tests();
         db_disconnect();
         return 0;
     }

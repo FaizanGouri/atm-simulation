@@ -5,6 +5,8 @@
 #include "auth.h"
 #include "deposit.h"
 #include "withdrawal.h"
+#include "transfer.h"
+#include "beneficiary.h"
 
 /**
  * Display header with system title.
@@ -12,9 +14,14 @@
 void ui_print_header(const char *subtitle);
 
 /**
- * Display main customer banking menu.
+ * Display main customer banking menu (1-6).
  */
 void ui_print_customer_menu(const CustomerSession *session);
+
+/**
+ * Display beneficiary management submenu (1-4).
+ */
+void ui_print_beneficiary_menu(void);
 
 /**
  * Display balance inquiry screen.
@@ -38,6 +45,20 @@ void ui_handle_deposit(const CustomerSession *session);
 void ui_handle_withdrawal(const CustomerSession *session);
 
 /**
+ * Handle interactive fund transfer flow.
+ *
+ * @param session Active authenticated customer session.
+ */
+void ui_handle_transfer(const CustomerSession *session);
+
+/**
+ * Handle interactive beneficiary management flow.
+ *
+ * @param session Active authenticated customer session.
+ */
+void ui_handle_manage_beneficiaries(const CustomerSession *session);
+
+/**
  * Display deposit receipt / confirmation screen.
  */
 void ui_display_deposit_receipt(const DepositReceipt *receipt, const char *customer_name);
@@ -46,6 +67,16 @@ void ui_display_deposit_receipt(const DepositReceipt *receipt, const char *custo
  * Display withdrawal receipt / confirmation screen with note breakdown.
  */
 void ui_display_withdrawal_receipt(const WithdrawalReceipt *receipt, const char *customer_name);
+
+/**
+ * Display transfer receipt / confirmation screen.
+ */
+void ui_display_transfer_receipt(const TransferReceipt *receipt, const char *customer_name);
+
+/**
+ * Display formatted beneficiary table.
+ */
+void ui_display_beneficiary_list(const BeneficiaryList *list);
 
 /**
  * Pause and prompt user to press enter to continue.

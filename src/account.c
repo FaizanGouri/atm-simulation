@@ -111,6 +111,106 @@ bool account_get_by_id(uint64_t account_id, AccountRecord *account)
     return found;
 }
 
+bool account_get_by_number(const char *account_number, AccountRecord *account)
+{
+    if (!account_number || !account) return false;
+
+    MYSQL *conn = db_get_connection();
+    if (!conn) return false;
+
+    const char *query = "SELECT account_id, customer_id, account_number, account_type, "
+                        "CAST(balance AS CHAR), CAST(daily_withdrawal_limit AS CHAR), status "
+                        "FROM accounts WHERE account_number = ? LIMIT 1";
+
+    MYSQL_STMT *stmt = mysql_stmt_init(conn);
+    if (!stmt) return false;
+
+    if (mysql_stmt_prepare(stmt, query, (unsigned long)strlen(query)) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND b_in[1];
+    memset(b_in, 0, sizeof(b_in));
+    unsigned long l_in_num = (unsigned long)strlen(account_number);
+    b_in[0].buffer_type = MYSQL_TYPE_STRING;
+    b_in[0].buffer = (char *)account_number;
+    b_in[0].length = &l_in_num;
+
+    if (mysql_stmt_bind_param(stmt, b_in) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    unsigned long long s_aid = 0, s_cid = 0;
+    char s_acc_num[35] = {0};
+    char s_acc_type[16] = {0};
+    char s_bal[32] = {0};
+    char s_limit[32] = {0};
+    char s_status[20] = {0};
+
+    unsigned long l_num = 0, l_type = 0, l_bal = 0, l_limit = 0, l_stat = 0;
+
+    MYSQL_BIND b_out[7];
+    memset(b_out, 0, sizeof(b_out));
+
+    b_out[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    b_out[0].buffer = &s_aid;
+
+    b_out[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    b_out[1].buffer = &s_cid;
+
+    b_out[2].buffer_type = MYSQL_TYPE_STRING;
+    b_out[2].buffer = s_acc_num;
+    b_out[2].buffer_length = sizeof(s_acc_num);
+    b_out[2].length = &l_num;
+
+    b_out[3].buffer_type = MYSQL_TYPE_STRING;
+    b_out[3].buffer = s_acc_type;
+    b_out[3].buffer_length = sizeof(s_acc_type);
+    b_out[3].length = &l_type;
+
+    b_out[4].buffer_type = MYSQL_TYPE_STRING;
+    b_out[4].buffer = s_bal;
+    b_out[4].buffer_length = sizeof(s_bal);
+    b_out[4].length = &l_bal;
+
+    b_out[5].buffer_type = MYSQL_TYPE_STRING;
+    b_out[5].buffer = s_limit;
+    b_out[5].buffer_length = sizeof(s_limit);
+    b_out[5].length = &l_limit;
+
+    b_out[6].buffer_type = MYSQL_TYPE_STRING;
+    b_out[6].buffer = s_status;
+    b_out[6].buffer_length = sizeof(s_status);
+    b_out[6].length = &l_stat;
+
+    if (mysql_stmt_bind_result(stmt, b_out) != 0 || mysql_stmt_store_result(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    bool found = false;
+    if (mysql_stmt_fetch(stmt) == 0) {
+        account->account_id = s_aid;
+        account->customer_id = s_cid;
+        strncpy(account->account_number, s_acc_num, sizeof(account->account_number) - 1);
+        account->account_number[sizeof(account->account_number) - 1] = '\0';
+        strncpy(account->account_type, s_acc_type, sizeof(account->account_type) - 1);
+        account->account_type[sizeof(account->account_type) - 1] = '\0';
+        strncpy(account->balance, s_bal, sizeof(account->balance) - 1);
+        account->balance[sizeof(account->balance) - 1] = '\0';
+        strncpy(account->daily_withdrawal_limit, s_limit, sizeof(account->daily_withdrawal_limit) - 1);
+        account->daily_withdrawal_limit[sizeof(account->daily_withdrawal_limit) - 1] = '\0';
+        account->status = account_status_from_string(s_status);
+        found = true;
+    }
+
+    mysql_stmt_free_result(stmt);
+    mysql_stmt_close(stmt);
+    return found;
+}
+
 void account_mask_number(const char *account_number, char *masked, size_t masked_size)
 {
     if (!masked || masked_size == 0) return;

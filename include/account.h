@@ -32,6 +32,15 @@ typedef struct {
 bool account_get_by_id(uint64_t account_id, AccountRecord *account);
 
 /**
+ * Fetch fresh account record by account_number using a prepared statement.
+ *
+ * @param account_number Full account number string.
+ * @param account Output struct to receive account details.
+ * @return true if found, false on error or not found.
+ */
+bool account_get_by_number(const char *account_number, AccountRecord *account);
+
+/**
  * Format raw currency decimal string (e.g. "45000.00") into Indian currency format (e.g. "Rs. 45,000.00").
  *
  * @param raw_amount Input numeric string.

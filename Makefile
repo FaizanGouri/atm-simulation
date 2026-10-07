@@ -16,6 +16,7 @@ SRCS = $(SRC_DIR)/main.c \
        $(SRC_DIR)/withdrawal.c \
        $(SRC_DIR)/deposit.c \
        $(SRC_DIR)/transfer.c \
+       $(SRC_DIR)/beneficiary.c \
        $(SRC_DIR)/atm.c \
        $(SRC_DIR)/admin.c \
        $(SRC_DIR)/database.c \
