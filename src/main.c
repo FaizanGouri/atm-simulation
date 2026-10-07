@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "database.h"
 #include "auth.h"
 #include "card.h"
@@ -7,6 +8,10 @@
 #include "security.h"
 #include "validation.h"
 #include "ui.h"
+#include "deposit.h"
+#include "withdrawal.h"
+#include "atm.h"
+#include "utils.h"
 
 static void run_automated_phase5_tests(void)
 {
@@ -88,6 +93,176 @@ static void run_automated_phase5_tests(void)
     printf("\n--- ALL PHASE 5 TESTS COMPLETED ---\n\n");
 }
 
+static void run_automated_phase6_tests(void)
+{
+    printf("\n=======================================================\n");
+    printf("         PHASE 6 DEPOSIT & WITHDRAWAL TEST SUITE       \n");
+    printf("=======================================================\n");
+
+    /* Test 1: Amount Parsing & Formatting (Zero Floating-Point) */
+    printf("\n[TEST 1] Fixed-Point Money Parser & Formatter:\n");
+    int64_t paise = 0;
+    bool ok_parse1 = utils_parse_amount_to_paise("5000.00", &paise) && (paise == 500000LL);
+    bool ok_parse2 = utils_parse_amount_to_paise("250.50", &paise) && (paise == 25050LL);
+    bool ok_parse3 = !utils_parse_amount_to_paise("-100.00", &paise);
+    bool ok_parse4 = !utils_parse_amount_to_paise("abc", &paise);
+    bool ok_parse5 = !utils_parse_amount_to_paise("10.999", &paise); /* More than 2 decimal places */
+
+    char str_buf[32];
+    utils_paise_to_decimal_str(500000LL, str_buf, sizeof(str_buf));
+    bool ok_str1 = (strcmp(str_buf, "5000.00") == 0);
+    utils_paise_to_decimal_str(50LL, str_buf, sizeof(str_buf));
+    bool ok_str2 = (strcmp(str_buf, "0.50") == 0);
+
+    bool test1_pass = ok_parse1 && ok_parse2 && ok_parse3 && ok_parse4 && ok_parse5 && ok_str1 && ok_str2;
+    printf("Fixed-point conversion without float: %s\n", test1_pass ? "PASS" : "FAIL");
+
+    /* Test 2: Denomination Algorithm (Backtracking) */
+    printf("\n[TEST 2] Denomination Backtracking Algorithm:\n");
+    DenominationBreakdown inv = { .count_500 = 10, .count_200 = 5, .count_100 = 5, .count_50 = 4 };
+    DenominationBreakdown disp;
+
+    /* 3750: 500x7 (3500) + 200x1 (200) + 50x1 (50) = 3750 */
+    bool ok_denom1 = atm_calculate_denominations(3750, &inv, &disp);
+    printf("  Dispense 3750: %s (500x%u, 200x%u, 100x%u, 50x%u)\n",
+           ok_denom1 ? "OK" : "FAIL",
+           disp.count_500, disp.count_200, disp.count_100, disp.count_50);
+
+    /* 600 with only 500x1, 200x3: should give 200x3 */
+    DenominationBreakdown inv2 = { .count_500 = 1, .count_200 = 3, .count_100 = 0, .count_50 = 0 };
+    bool ok_denom2 = atm_calculate_denominations(600, &inv2, &disp) && (disp.count_500 == 0 && disp.count_200 == 3);
+    printf("  Dispense 600 with 500x1, 200x3: %s (dispensed 200x%u)\n",
+           ok_denom2 ? "OK" : "FAIL", disp.count_200);
+
+    /* Non-multiple of 50 (e.g. 125) must fail */
+    bool ok_denom3 = !atm_calculate_denominations(125, &inv, &disp);
+    printf("  Reject non-multiple of 50 (125): %s\n", ok_denom3 ? "PASS" : "FAIL");
+
+    /* Test 3: Invalid Deposit Amount Validation */
+    printf("\n[TEST 3] Deposit Input Validation (Negative / Zero / Malformed):\n");
+    DepositReceipt dep_rcpt;
+    DepositResult d_res1 = deposit_execute(1, 1, "-500", &dep_rcpt);
+    DepositResult d_res2 = deposit_execute(1, 1, "0", &dep_rcpt);
+    DepositResult d_res3 = deposit_execute(1, 1, "invalid_amount", &dep_rcpt);
+    bool test3_pass = (d_res1 == DEPOSIT_ERR_INVALID_AMOUNT) &&
+                      (d_res2 == DEPOSIT_ERR_INVALID_AMOUNT) &&
+                      (d_res3 == DEPOSIT_ERR_INVALID_AMOUNT);
+    printf("Rejection of invalid deposit amounts: %s\n", test3_pass ? "PASS" : "FAIL");
+
+    /* Record Initial Account 1 Balance */
+    AccountRecord acc_before;
+    account_get_by_id(1, &acc_before);
+    printf("Initial Account 1 Balance: %s\n", acc_before.balance);
+
+    /* Test 4: Valid Deposit Execution & Balance Update */
+    printf("\n[TEST 4] Valid Deposit Execution (Rs. 5,000.00):\n");
+    DepositResult d_res_ok = deposit_execute(1, 1, "5000.00", &dep_rcpt);
+    AccountRecord acc_after_dep;
+    account_get_by_id(1, &acc_after_dep);
+
+    printf("Deposit Result: %s\n", deposit_result_to_string(d_res_ok));
+    printf("Deposit Ref: %s, Previous: %s, New Balance: %s\n",
+           dep_rcpt.transaction_reference, dep_rcpt.previous_balance, dep_rcpt.new_balance);
+
+    bool test4_pass = (d_res_ok == DEPOSIT_SUCCESS) &&
+                      (strcmp(dep_rcpt.previous_balance, "45000.00") == 0) &&
+                      (strcmp(dep_rcpt.new_balance, "50000.00") == 0) &&
+                      (strcmp(acc_after_dep.balance, "50000.00") == 0);
+    printf("Deposit execution and database update: %s\n", test4_pass ? "PASS" : "FAIL");
+
+    /* Test 5: Invalid Withdrawal Validation */
+    printf("\n[TEST 5] Withdrawal Input Validation (Negative / Zero / Non-multiple of 50):\n");
+    WithdrawalReceipt wth_rcpt;
+    WithdrawalResult w_res1 = withdrawal_execute(1, 1, "-100", &wth_rcpt);
+    WithdrawalResult w_res2 = withdrawal_execute(1, 1, "0", &wth_rcpt);
+    WithdrawalResult w_res3 = withdrawal_execute(1, 1, "125", &wth_rcpt);
+    WithdrawalResult w_res4 = withdrawal_execute(1, 1, "50.25", &wth_rcpt);
+    bool test5_pass = (w_res1 == WITHDRAWAL_ERR_INVALID_AMOUNT) &&
+                      (w_res2 == WITHDRAWAL_ERR_INVALID_AMOUNT) &&
+                      (w_res3 == WITHDRAWAL_ERR_INVALID_AMOUNT) &&
+                      (w_res4 == WITHDRAWAL_ERR_INVALID_AMOUNT);
+    printf("Rejection of invalid withdrawal requests: %s\n", test5_pass ? "PASS" : "FAIL");
+
+    /* Test 6: Insufficient Funds Rollback Check */
+    printf("\n[TEST 6] Insufficient Funds Check & ACID Rollback:\n");
+    WithdrawalResult w_res_funds = withdrawal_execute(1, 1, "60000", &wth_rcpt);
+    AccountRecord acc_after_insuf;
+    account_get_by_id(1, &acc_after_insuf);
+    bool test6_pass = (w_res_funds == WITHDRAWAL_ERR_INSUFFICIENT_FUNDS) &&
+                      (strcmp(acc_after_insuf.balance, "50000.00") == 0);
+    printf("Insufficient funds rejected with zero balance change: %s\n", test6_pass ? "PASS" : "FAIL");
+
+    /* Test 7: Valid Withdrawal Execution & ATM Cash Deduction */
+    printf("\n[TEST 7] Valid Withdrawal Execution (Rs. 5,000.00):\n");
+    DenominationBreakdown atm_cash_before;
+    atm_get_cash_inventory(1, &atm_cash_before);
+
+    WithdrawalResult w_res_ok = withdrawal_execute(1, 1, "5000", &wth_rcpt);
+    AccountRecord acc_after_wth;
+    account_get_by_id(1, &acc_after_wth);
+    DenominationBreakdown atm_cash_after;
+    atm_get_cash_inventory(1, &atm_cash_after);
+
+    printf("Withdrawal Result: %s\n", withdrawal_result_to_string(w_res_ok));
+    printf("Withdrawal Ref: %s, Previous: %s, New Balance: %s\n",
+           wth_rcpt.transaction_reference, wth_rcpt.previous_balance, wth_rcpt.new_balance);
+    printf("Dispensed: 500x%u, 200x%u, 100x%u, 50x%u\n",
+           wth_rcpt.dispensed_notes.count_500,
+           wth_rcpt.dispensed_notes.count_200,
+           wth_rcpt.dispensed_notes.count_100,
+           wth_rcpt.dispensed_notes.count_50);
+    printf("ATM 500 notes: %u -> %u\n", atm_cash_before.count_500, atm_cash_after.count_500);
+
+    bool test7_pass = (w_res_ok == WITHDRAWAL_SUCCESS) &&
+                      (strcmp(acc_after_wth.balance, "45000.00") == 0) &&
+                      (wth_rcpt.dispensed_notes.count_500 == 10) &&
+                      (atm_cash_after.count_500 == atm_cash_before.count_500 - 10);
+    printf("Withdrawal execution, balance deduction & ATM inventory update: %s\n", test7_pass ? "PASS" : "FAIL");
+
+    /* Test 8: Daily Withdrawal Limit Check */
+    printf("\n[TEST 8] Daily Withdrawal Limit Enforcement (Limit: Rs. 25,000.00):\n");
+    /* Account 1 has already withdrawn 5,000.00 today. Attempting to withdraw 21,000.00 should exceed 25,000.00 */
+    WithdrawalResult w_res_limit = withdrawal_execute(1, 1, "21000", &wth_rcpt);
+    AccountRecord acc_after_limit;
+    account_get_by_id(1, &acc_after_limit);
+
+    printf("Withdrawal of Rs. 21,000.00 Result: %s\n", withdrawal_result_to_string(w_res_limit));
+    bool test8_pass = (w_res_limit == WITHDRAWAL_ERR_DAILY_LIMIT_EXCEEDED) &&
+                      (strcmp(acc_after_limit.balance, "45000.00") == 0);
+    printf("Daily limit protection enforced: %s\n", test8_pass ? "PASS" : "FAIL");
+
+    /* Test 9: Restore Test Environment (Restore ATM cash & Clean test records) */
+    printf("\n[TEST 9] Database State Restoration:\n");
+    MYSQL *conn = db_get_connection();
+    if (conn) {
+        /* Restore ATM 1 500-rupee notes back to 120 */
+        mysql_query(conn, "UPDATE atm_cash SET quantity = 120 WHERE atm_id = 1 AND denomination = 500");
+        /* Clean up test transactions created today during test run */
+        char del_query[256];
+        snprintf(del_query, sizeof(del_query),
+                 "DELETE FROM transactions WHERE transaction_reference IN ('%s', '%s')",
+                 dep_rcpt.transaction_reference, wth_rcpt.transaction_reference);
+        mysql_query(conn, del_query);
+    }
+    AccountRecord final_acc;
+    account_get_by_id(1, &final_acc);
+    DenominationBreakdown final_atm;
+    atm_get_cash_inventory(1, &final_atm);
+
+    bool test9_pass = (strcmp(final_acc.balance, "45000.00") == 0) &&
+                      (final_atm.count_500 == 120);
+    printf("Restored Account 1 Balance: %s, ATM 500-notes: %u -> %s\n",
+           final_acc.balance, final_atm.count_500, test9_pass ? "PASS" : "FAIL");
+
+    printf("\n=======================================================\n");
+    if (test1_pass && test3_pass && test4_pass && test5_pass && test6_pass && test7_pass && test8_pass && test9_pass) {
+        printf("              ALL PHASE 6 TESTS PASSED                 \n");
+    } else {
+        printf("              SOME PHASE 6 TESTS FAILED                \n");
+    }
+    printf("=======================================================\n\n");
+}
+
 static void run_customer_menu_loop(CustomerSession *session)
 {
     char choice_buf[16];
@@ -104,11 +279,15 @@ static void run_customer_menu_loop(CustomerSession *session)
         if (strcmp(choice_buf, "1") == 0) {
             ui_display_balance_inquiry(session);
         } else if (strcmp(choice_buf, "2") == 0) {
+            ui_handle_deposit(session);
+        } else if (strcmp(choice_buf, "3") == 0) {
+            ui_handle_withdrawal(session);
+        } else if (strcmp(choice_buf, "4") == 0) {
             printf("\nLogging out. Thank you for using our ATM.\n");
             auth_logout(session);
             in_menu = false;
         } else {
-            printf("\n[ERROR] Invalid choice '%s'. Please enter 1 or 2.\n", choice_buf);
+            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 4.\n", choice_buf);
         }
     }
 }
@@ -130,9 +309,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Automated test mode */
+    /* Automated test modes */
     if (argc > 1 && strcmp(argv[1], "--test-phase5") == 0) {
         run_automated_phase5_tests();
+        db_disconnect();
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--test-phase6") == 0) {
+        run_automated_phase6_tests();
         db_disconnect();
         return 0;
     }
