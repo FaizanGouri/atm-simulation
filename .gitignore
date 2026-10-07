@@ -19,3 +19,6 @@ build/
 .my.cnf
 *.cnf
 config.local.*
+*.secret
+secrets/
+credentials/
