@@ -298,3 +298,39 @@ bool card_update_status(uint64_t card_id, CardStatus new_status)
     mysql_stmt_close(stmt);
     return true;
 }
+
+bool card_update_pin(uint64_t card_id, const char *new_pin_hash)
+{
+    MYSQL *conn = db_get_connection();
+    if (!conn || !new_pin_hash) return false;
+
+    const char *query = "UPDATE cards SET pin_hash = ?, failed_pin_attempts = 0 WHERE card_id = ?";
+    MYSQL_STMT *stmt = mysql_stmt_init(conn);
+    if (!stmt) return false;
+
+    if (mysql_stmt_prepare(stmt, query, (unsigned long)strlen(query)) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND b[2];
+    memset(b, 0, sizeof(b));
+    unsigned long hash_len = (unsigned long)strlen(new_pin_hash);
+    unsigned long long cid = card_id;
+
+    b[0].buffer_type = MYSQL_TYPE_STRING;
+    b[0].buffer = (char *)new_pin_hash;
+    b[0].length = &hash_len;
+
+    b[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    b[1].buffer = &cid;
+
+    if (mysql_stmt_bind_param(stmt, b) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    mysql_stmt_close(stmt);
+    return true;
+}
+

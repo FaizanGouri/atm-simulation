@@ -67,6 +67,13 @@ void ui_handle_manage_beneficiaries(const CustomerSession *session);
 void ui_handle_mini_statement(const CustomerSession *session);
 
 /**
+ * Handle interactive PIN change flow.
+ *
+ * @param session Active authenticated customer session.
+ */
+void ui_handle_pin_change(CustomerSession *session);
+
+/**
  * Display deposit receipt / confirmation screen.
  */
 void ui_display_deposit_receipt(const DepositReceipt *receipt, const char *customer_name);

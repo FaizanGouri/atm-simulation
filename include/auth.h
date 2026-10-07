@@ -52,4 +52,35 @@ void auth_logout(CustomerSession *session);
  */
 const char *auth_result_to_message(AuthResult result);
 
+typedef enum {
+    PIN_CHANGE_SUCCESS = 0,
+    PIN_CHANGE_ERR_UNAUTHENTICATED,
+    PIN_CHANGE_ERR_INCORRECT_CURRENT_PIN,
+    PIN_CHANGE_ERR_INVALID_NEW_PIN,
+    PIN_CHANGE_ERR_CONFIRMATION_MISMATCH,
+    PIN_CHANGE_ERR_SAME_PIN,
+    PIN_CHANGE_ERR_DB_FAILURE
+} PinChangeResult;
+
+/**
+ * Perform PIN change for an authenticated customer session.
+ *
+ * @param session Authenticated customer session.
+ * @param current_pin Current PIN entered by customer.
+ * @param new_pin New PIN entered by customer.
+ * @param confirm_pin Confirmation of new PIN entered by customer.
+ * @return PinChangeResult status code.
+ */
+PinChangeResult auth_change_pin(
+    CustomerSession *session,
+    const char *current_pin,
+    const char *new_pin,
+    const char *confirm_pin
+);
+
+/**
+ * Return human-readable message for a PinChangeResult code.
+ */
+const char *auth_pin_change_result_to_message(PinChangeResult result);
+
 #endif /* AUTH_H */

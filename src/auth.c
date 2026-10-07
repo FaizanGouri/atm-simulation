@@ -3,6 +3,8 @@
 #include "security.h"
 #include "validation.h"
 #include "database.h"
+#include "transaction.h"
+#include "utils.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -213,3 +215,223 @@ void auth_logout(CustomerSession *session)
         memset(session, 0, sizeof(CustomerSession));
     }
 }
+
+const char *auth_pin_change_result_to_message(PinChangeResult result)
+{
+    switch (result) {
+        case PIN_CHANGE_SUCCESS:
+            return "PIN changed successfully.";
+        case PIN_CHANGE_ERR_UNAUTHENTICATED:
+            return "User session is not authenticated.";
+        case PIN_CHANGE_ERR_INCORRECT_CURRENT_PIN:
+            return "Current PIN is incorrect.";
+        case PIN_CHANGE_ERR_INVALID_NEW_PIN:
+            return "New PIN must be exactly 4 digits.";
+        case PIN_CHANGE_ERR_CONFIRMATION_MISMATCH:
+            return "New PIN and confirmation do not match.";
+        case PIN_CHANGE_ERR_SAME_PIN:
+            return "New PIN must be different from the current PIN.";
+        case PIN_CHANGE_ERR_DB_FAILURE:
+            return "Unable to change PIN due to a database error.";
+        default:
+            return "Unknown PIN change error.";
+    }
+}
+
+PinChangeResult auth_change_pin(
+    CustomerSession *session,
+    const char *current_pin,
+    const char *new_pin,
+    const char *confirm_pin
+)
+{
+    if (!session || !session->is_authenticated || session->card_id == 0) {
+        return PIN_CHANGE_ERR_UNAUTHENTICATED;
+    }
+
+    if (!current_pin || !new_pin || !confirm_pin) {
+        return PIN_CHANGE_ERR_INVALID_NEW_PIN;
+    }
+
+    char clean_cur[16] = {0};
+    char clean_new[16] = {0};
+    char clean_conf[16] = {0};
+    char cur_hash[65] = {0};
+    char new_hash[65] = {0};
+    char db_hash[65] = {0};
+
+    strncpy(clean_cur, current_pin, sizeof(clean_cur) - 1);
+    validation_trim(clean_cur);
+
+    strncpy(clean_new, new_pin, sizeof(clean_new) - 1);
+    validation_trim(clean_new);
+
+    strncpy(clean_conf, confirm_pin, sizeof(clean_conf) - 1);
+    validation_trim(clean_conf);
+
+    /* Validate new PIN format: strictly 4 numeric digits */
+    if (strlen(clean_new) != 4 || !validation_is_valid_pin(clean_new)) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_INVALID_NEW_PIN;
+    }
+
+    /* Validate new PIN confirmation match */
+    if (strcmp(clean_new, clean_conf) != 0) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_CONFIRMATION_MISMATCH;
+    }
+
+    /* Validate that new PIN is different from current PIN */
+    if (strcmp(clean_new, clean_cur) == 0) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_SAME_PIN;
+    }
+
+    /* Retrieve current PIN hash from cards table */
+    MYSQL *conn = db_get_connection();
+    if (!conn) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    const char *fetch_query = "SELECT pin_hash FROM cards WHERE card_id = ? LIMIT 1";
+    MYSQL_STMT *stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    if (mysql_stmt_prepare(stmt, fetch_query, (unsigned long)strlen(fetch_query)) != 0) {
+        mysql_stmt_close(stmt);
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    MYSQL_BIND b_in[1];
+    memset(b_in, 0, sizeof(b_in));
+    unsigned long long cid = session->card_id;
+    b_in[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    b_in[0].buffer = &cid;
+
+    if (mysql_stmt_bind_param(stmt, b_in) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    unsigned long l_db_hash = 0;
+    MYSQL_BIND b_out[1];
+    memset(b_out, 0, sizeof(b_out));
+    b_out[0].buffer_type = MYSQL_TYPE_STRING;
+    b_out[0].buffer = db_hash;
+    b_out[0].buffer_length = sizeof(db_hash);
+    b_out[0].length = &l_db_hash;
+
+    if (mysql_stmt_bind_result(stmt, b_out) != 0 || mysql_stmt_store_result(stmt) != 0 || mysql_stmt_fetch(stmt) != 0) {
+        mysql_stmt_free_result(stmt);
+        mysql_stmt_close(stmt);
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    mysql_stmt_free_result(stmt);
+    mysql_stmt_close(stmt);
+
+    /* Hash current entered PIN */
+    if (!security_hash_sha256(clean_cur, cur_hash, sizeof(cur_hash))) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        memset(db_hash, 0, sizeof(db_hash));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    /* Compare current PIN hash in constant time */
+    if (!security_constant_time_compare(cur_hash, db_hash)) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        memset(cur_hash, 0, sizeof(cur_hash));
+        memset(db_hash, 0, sizeof(db_hash));
+        /* Do NOT alter login failure count */
+        return PIN_CHANGE_ERR_INCORRECT_CURRENT_PIN;
+    }
+
+    /* Hash new PIN */
+    if (!security_hash_sha256(clean_new, new_hash, sizeof(new_hash))) {
+        memset(clean_cur, 0, sizeof(clean_cur));
+        memset(clean_new, 0, sizeof(clean_new));
+        memset(clean_conf, 0, sizeof(clean_conf));
+        memset(cur_hash, 0, sizeof(cur_hash));
+        memset(db_hash, 0, sizeof(db_hash));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    /* Wipe plaintext PINs and temporary current hashes */
+    memset(clean_cur, 0, sizeof(clean_cur));
+    memset(clean_new, 0, sizeof(clean_new));
+    memset(clean_conf, 0, sizeof(clean_conf));
+    memset(cur_hash, 0, sizeof(cur_hash));
+    memset(db_hash, 0, sizeof(db_hash));
+
+    /* Begin atomic database transaction */
+    if (!db_transaction_begin()) {
+        memset(new_hash, 0, sizeof(new_hash));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    /* Update card PIN hash and reset failed attempts to 0 */
+    if (!card_update_pin(session->card_id, new_hash)) {
+        db_transaction_rollback();
+        memset(new_hash, 0, sizeof(new_hash));
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+    memset(new_hash, 0, sizeof(new_hash));
+
+    /* Insert PIN_CHANGE transaction audit record */
+    char txn_ref[36];
+    utils_generate_txn_reference(txn_ref, sizeof(txn_ref));
+
+    TransactionRecordInput txn_in;
+    memset(&txn_in, 0, sizeof(txn_in));
+    strncpy(txn_in.transaction_reference, txn_ref, sizeof(txn_in.transaction_reference) - 1);
+    txn_in.account_id = session->account_id;
+    txn_in.type = TXN_TYPE_PIN_CHANGE;
+    strncpy(txn_in.amount, "0.00", sizeof(txn_in.amount) - 1);
+    strncpy(txn_in.balance_before, "0.00", sizeof(txn_in.balance_before) - 1);
+    strncpy(txn_in.balance_after, "0.00", sizeof(txn_in.balance_after) - 1);
+    txn_in.related_account_id = NULL;
+    txn_in.atm_id = NULL;
+    txn_in.status = TXN_STATUS_SUCCESS;
+    txn_in.description = "ATM Card PIN Change";
+
+    if (!transaction_record_insert(&txn_in)) {
+        db_transaction_rollback();
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    /* Commit transaction */
+    if (!db_transaction_commit()) {
+        db_transaction_rollback();
+        return PIN_CHANGE_ERR_DB_FAILURE;
+    }
+
+    return PIN_CHANGE_SUCCESS;
+}
+

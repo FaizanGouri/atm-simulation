@@ -70,4 +70,13 @@ bool card_reset_failed_attempts(uint64_t card_id);
  */
 bool card_update_status(uint64_t card_id, CardStatus new_status);
 
+/**
+ * Update card PIN hash in database and reset failed attempts counter to 0.
+ *
+ * @param card_id Card ID.
+ * @param new_pin_hash SHA-256 hexadecimal digest of the new PIN.
+ * @return true on success, false on SQL error.
+ */
+bool card_update_pin(uint64_t card_id, const char *new_pin_hash);
+
 #endif /* CARD_H */

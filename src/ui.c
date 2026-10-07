@@ -2,6 +2,7 @@
 #include "account.h"
 #include "database.h"
 #include "validation.h"
+#include "security.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -29,9 +30,10 @@ void ui_print_customer_menu(const CustomerSession *session)
     printf("4. Transfer Money\n");
     printf("5. Manage Beneficiaries\n");
     printf("6. Mini Statement\n");
-    printf("7. Logout\n");
+    printf("7. Change PIN\n");
+    printf("8. Logout\n");
     printf("========================================\n");
-    printf("Enter choice [1-7]: ");
+    printf("Enter choice [1-8]: ");
     fflush(stdout);
 }
 
@@ -491,6 +493,58 @@ void ui_handle_mini_statement(const CustomerSession *session)
     }
 
     ui_display_mini_statement(session, &list);
+    ui_pause();
+}
+
+void ui_handle_pin_change(CustomerSession *session)
+{
+    if (!session || !session->is_authenticated) {
+        printf("\n[ERROR] Access denied: No active customer session.\n");
+        return;
+    }
+
+    printf("\n========================================\n");
+    printf("              CHANGE PIN\n");
+    printf("========================================\n");
+
+    char current_pin[16] = {0};
+    char new_pin[16] = {0};
+    char confirm_pin[16] = {0};
+
+    if (!security_read_masked_input("Current PIN: ", current_pin, sizeof(current_pin))) {
+        printf("\nPIN change cancelled.\n");
+        memset(current_pin, 0, sizeof(current_pin));
+        return;
+    }
+
+    if (!security_read_masked_input("New PIN: ", new_pin, sizeof(new_pin))) {
+        printf("\nPIN change cancelled.\n");
+        memset(current_pin, 0, sizeof(current_pin));
+        memset(new_pin, 0, sizeof(new_pin));
+        return;
+    }
+
+    if (!security_read_masked_input("Confirm New PIN: ", confirm_pin, sizeof(confirm_pin))) {
+        printf("\nPIN change cancelled.\n");
+        memset(current_pin, 0, sizeof(current_pin));
+        memset(new_pin, 0, sizeof(new_pin));
+        memset(confirm_pin, 0, sizeof(confirm_pin));
+        return;
+    }
+
+    PinChangeResult result = auth_change_pin(session, current_pin, new_pin, confirm_pin);
+
+    /* Zero all PIN buffers immediately */
+    memset(current_pin, 0, sizeof(current_pin));
+    memset(new_pin, 0, sizeof(new_pin));
+    memset(confirm_pin, 0, sizeof(confirm_pin));
+
+    if (result == PIN_CHANGE_SUCCESS) {
+        printf("\nPIN changed successfully.\n");
+    } else {
+        printf("\n[ERROR] %s\n", auth_pin_change_result_to_message(result));
+    }
+
     ui_pause();
 }
 

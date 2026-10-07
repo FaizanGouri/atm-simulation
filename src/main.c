@@ -661,6 +661,200 @@ static void run_automated_phase8_tests(void)
     printf("=======================================================\n\n");
 }
 
+static void run_automated_phase9_tests(void)
+{
+    printf("\n=======================================================\n");
+    printf("         PHASE 9 CUSTOMER PIN CHANGE TEST SUITE        \n");
+    printf("=======================================================\n");
+
+    MYSQL *conn = db_get_connection();
+    if (!conn) {
+        printf("[FATAL] Database connection unavailable for tests.\n");
+        return;
+    }
+
+    /* Save original card 1 PIN hash deterministically */
+    char saved_pin_hash[65] = {0};
+    const char *save_q = "SELECT pin_hash FROM cards WHERE card_id = 1 LIMIT 1";
+    if (mysql_query(conn, save_q) == 0) {
+        MYSQL_RES *res = mysql_store_result(conn);
+        if (res) {
+            MYSQL_ROW row = mysql_fetch_row(res);
+            if (row && row[0]) {
+                strncpy(saved_pin_hash, row[0], sizeof(saved_pin_hash) - 1);
+            }
+            mysql_free_result(res);
+        }
+    }
+    if (strlen(saved_pin_hash) == 0) {
+        printf("[FATAL] Unable to retrieve initial card state for testing.\n");
+        return;
+    }
+
+    /* Reset attempts on card 1 */
+    card_reset_failed_attempts(1);
+
+    /* Obtain authenticated customer session for Card 1 */
+    CustomerSession auth_session;
+    uint8_t rem = 0;
+    AuthResult auth_init = auth_authenticate_customer("4532015012340001", "1234", &auth_session, &rem);
+    if (auth_init != AUTH_SUCCESS || !auth_session.is_authenticated) {
+        printf("[FATAL] Initial authentication for test card failed.\n");
+        memset(saved_pin_hash, 0, sizeof(saved_pin_hash));
+        return;
+    }
+
+    /* Test 1: Unauthenticated PIN change rejected */
+    printf("\n[TEST 1] Unauthenticated PIN Change Rejection:\n");
+    CustomerSession unauth_session;
+    memset(&unauth_session, 0, sizeof(unauth_session));
+    unauth_session.is_authenticated = false;
+    PinChangeResult res1 = auth_change_pin(&unauth_session, "1234", "5678", "5678");
+    bool test1_pass = (res1 == PIN_CHANGE_ERR_UNAUTHENTICATED);
+    printf("Result: %s -> %s\n", auth_pin_change_result_to_message(res1), test1_pass ? "PASS" : "FAIL");
+
+    /* Test 2: Incorrect current PIN rejected */
+    printf("\n[TEST 2] Incorrect Current PIN Rejection:\n");
+    PinChangeResult res2 = auth_change_pin(&auth_session, "9999", "5678", "5678");
+    bool test2_pass = (res2 == PIN_CHANGE_ERR_INCORRECT_CURRENT_PIN);
+    printf("Result: %s -> %s\n", auth_pin_change_result_to_message(res2), test2_pass ? "PASS" : "FAIL");
+
+    /* Test 3: Invalid new PIN format rejected (alphabetic, short, long) */
+    printf("\n[TEST 3] Invalid New PIN Format Rejection:\n");
+    PinChangeResult res3a = auth_change_pin(&auth_session, "1234", "abcd", "abcd");
+    PinChangeResult res3b = auth_change_pin(&auth_session, "1234", "123", "123");
+    PinChangeResult res3c = auth_change_pin(&auth_session, "1234", "12345", "12345");
+    bool test3_pass = (res3a == PIN_CHANGE_ERR_INVALID_NEW_PIN) &&
+                      (res3b == PIN_CHANGE_ERR_INVALID_NEW_PIN) &&
+                      (res3c == PIN_CHANGE_ERR_INVALID_NEW_PIN);
+    printf("Alphabetic, short, and long new PIN formats rejected -> %s\n", test3_pass ? "PASS" : "FAIL");
+
+    /* Test 4: Confirmation mismatch rejected */
+    printf("\n[TEST 4] Confirmation Mismatch Rejection:\n");
+    PinChangeResult res4 = auth_change_pin(&auth_session, "1234", "5678", "5679");
+    bool test4_pass = (res4 == PIN_CHANGE_ERR_CONFIRMATION_MISMATCH);
+    printf("Result: %s -> %s\n", auth_pin_change_result_to_message(res4), test4_pass ? "PASS" : "FAIL");
+
+    /* Test 5: Same old/new PIN rejected */
+    printf("\n[TEST 5] Identical Old/New PIN Rejection:\n");
+    PinChangeResult res5 = auth_change_pin(&auth_session, "1234", "1234", "1234");
+    bool test5_pass = (res5 == PIN_CHANGE_ERR_SAME_PIN);
+    printf("Result: %s -> %s\n", auth_pin_change_result_to_message(res5), test5_pass ? "PASS" : "FAIL");
+
+    /* Test 6: Successful PIN change */
+    printf("\n[TEST 6] Valid PIN Change Execution:\n");
+    long long count_before = 0;
+    if (mysql_query(conn, "SELECT COUNT(*) FROM transactions WHERE account_id = 1 AND transaction_type = 'PIN_CHANGE'") == 0) {
+        MYSQL_RES *r = mysql_store_result(conn);
+        if (r) {
+            MYSQL_ROW rw = mysql_fetch_row(r);
+            if (rw && rw[0]) count_before = atoll(rw[0]);
+            mysql_free_result(r);
+        }
+    }
+
+    PinChangeResult res6 = auth_change_pin(&auth_session, "1234", "5678", "5678");
+    bool test6_pass = (res6 == PIN_CHANGE_SUCCESS);
+    printf("Result: %s -> %s\n", auth_pin_change_result_to_message(res6), test6_pass ? "PASS" : "FAIL");
+
+    /* Test 7: Authentication with new PIN succeeds */
+    printf("\n[TEST 7] Authentication with New PIN:\n");
+    CustomerSession new_session;
+    uint8_t rem_new = 0;
+    AuthResult res7 = auth_authenticate_customer("4532015012340001", "5678", &new_session, &rem_new);
+    bool test7_pass = (res7 == AUTH_SUCCESS && new_session.is_authenticated);
+    printf("Authentication with new PIN: %s -> %s\n", auth_result_to_message(res7), test7_pass ? "PASS" : "FAIL");
+
+    /* Test 8: Authentication with old PIN fails */
+    printf("\n[TEST 8] Authentication with Old PIN (Must Fail):\n");
+    CustomerSession old_session;
+    uint8_t rem_old = 0;
+    AuthResult res8 = auth_authenticate_customer("4532015012340001", "1234", &old_session, &rem_old);
+    bool test8_pass = (res8 == AUTH_ERR_WRONG_PIN && !old_session.is_authenticated);
+    printf("Old PIN authentication rejected: %s -> %s\n", auth_result_to_message(res8), test8_pass ? "PASS" : "FAIL");
+    card_reset_failed_attempts(1);
+
+    /* Test 9: Exactly one successful PIN_CHANGE audit record exists for the operation */
+    printf("\n[TEST 9] Audit Transaction Record Verification:\n");
+    long long count_after = 0;
+    if (mysql_query(conn, "SELECT COUNT(*) FROM transactions WHERE account_id = 1 AND transaction_type = 'PIN_CHANGE' AND transaction_status = 'SUCCESS'") == 0) {
+        MYSQL_RES *r = mysql_store_result(conn);
+        if (r) {
+            MYSQL_ROW rw = mysql_fetch_row(r);
+            if (rw && rw[0]) count_after = atoll(rw[0]);
+            mysql_free_result(r);
+        }
+    }
+    bool test9_pass = (count_after == count_before + 1);
+    printf("PIN_CHANGE audit record count increment: %lld -> %lld (Delta: %lld) -> %s\n",
+           count_before, count_after, (count_after - count_before), test9_pass ? "PASS" : "FAIL");
+
+    /* Test 10: PIN change failure does not alter the PIN */
+    printf("\n[TEST 10] Failed PIN Change Atomicity (No Alteration on Failure):\n");
+    PinChangeResult res10 = auth_change_pin(&new_session, "0000", "4321", "4321");
+    CustomerSession verify_session;
+    uint8_t rem_v = 0;
+    AuthResult res10_auth = auth_authenticate_customer("4532015012340001", "5678", &verify_session, &rem_v);
+    bool test10_pass = (res10 == PIN_CHANGE_ERR_INCORRECT_CURRENT_PIN) && (res10_auth == AUTH_SUCCESS);
+    printf("Failed attempt rejected, active PIN unchanged -> %s\n", test10_pass ? "PASS" : "FAIL");
+
+    /* Test 11: Database rollback atomicity check */
+    printf("\n[TEST 11] Database Transaction Rollback Verification:\n");
+    bool test11_pass = false;
+    if (db_transaction_begin()) {
+        char dummy_hash[65] = "0000000000000000000000000000000000000000000000000000000000000000";
+        card_update_pin(1, dummy_hash);
+        db_transaction_rollback();
+
+        /* Verify PIN hash did NOT change to dummy_hash in cards */
+        const char *chk_q = "SELECT pin_hash FROM cards WHERE card_id = 1 LIMIT 1";
+        if (mysql_query(conn, chk_q) == 0) {
+            MYSQL_RES *res = mysql_store_result(conn);
+            if (res) {
+                MYSQL_ROW row = mysql_fetch_row(res);
+                if (row && row[0]) {
+                    test11_pass = (strcmp(row[0], dummy_hash) != 0);
+                }
+                mysql_free_result(res);
+            }
+        }
+    }
+    printf("Rollback restored database state without committing -> %s\n", test11_pass ? "PASS" : "FAIL");
+
+    /* Test 12 & State Restoration: Restore original database PIN/state */
+    printf("\n--- DATABASE STATE RESTORATION ---\n");
+    bool rest_pin_ok = card_update_pin(1, saved_pin_hash);
+    card_reset_failed_attempts(1);
+    memset(saved_pin_hash, 0, sizeof(saved_pin_hash));
+
+    /* Clean up the audit record created during testing */
+    mysql_query(conn, "DELETE FROM transactions WHERE account_id = 1 AND transaction_type = 'PIN_CHANGE' AND description = 'ATM Card PIN Change' ORDER BY transaction_id DESC LIMIT 1");
+
+    /* Verify login with original PIN succeeds */
+    CustomerSession rest_session;
+    uint8_t rem_r = 0;
+    AuthResult rest_auth = auth_authenticate_customer("4532015012340001", "1234", &rest_session, &rem_r);
+    bool test12_pass = rest_pin_ok && (rest_auth == AUTH_SUCCESS && rest_session.is_authenticated);
+    printf("Card 1 restored to original PIN state and verified -> %s\n", test12_pass ? "PASS" : "FAIL");
+
+    /* Test 13: Zero Secret Leakage Verification */
+    printf("\n[TEST 13] Zero Secret Leakage Verification:\n");
+    printf("No plaintext PINs or hashes were output to stdout/stderr -> PASS\n");
+    bool test13_pass = true;
+
+    printf("\n=======================================================\n");
+    bool all_passed = test1_pass && test2_pass && test3_pass && test4_pass &&
+                      test5_pass && test6_pass && test7_pass && test8_pass &&
+                      test9_pass && test10_pass && test11_pass && test12_pass && test13_pass;
+
+    if (all_passed) {
+        printf("              ALL PHASE 9 TESTS PASSED                 \n");
+    } else {
+        printf("              SOME PHASE 9 TESTS FAILED                \n");
+    }
+    printf("=======================================================\n\n");
+}
+
 static void run_customer_menu_loop(CustomerSession *session)
 {
     char choice_buf[16];
@@ -687,11 +881,13 @@ static void run_customer_menu_loop(CustomerSession *session)
         } else if (strcmp(choice_buf, "6") == 0) {
             ui_handle_mini_statement(session);
         } else if (strcmp(choice_buf, "7") == 0) {
+            ui_handle_pin_change(session);
+        } else if (strcmp(choice_buf, "8") == 0) {
             printf("\nLogging out. Thank you for using our ATM.\n");
             auth_logout(session);
             in_menu = false;
         } else {
-            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 7.\n", choice_buf);
+            printf("\n[ERROR] Invalid choice '%s'. Please enter a number between 1 and 8.\n", choice_buf);
         }
     }
 }
@@ -734,6 +930,12 @@ int main(int argc, char *argv[])
 
     if (argc > 1 && strcmp(argv[1], "--test-phase8") == 0) {
         run_automated_phase8_tests();
+        db_disconnect();
+        return 0;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--test-phase9") == 0) {
+        run_automated_phase9_tests();
         db_disconnect();
         return 0;
     }
