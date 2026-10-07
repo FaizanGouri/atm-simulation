@@ -108,7 +108,7 @@ const char *admin_refill_result_to_message(AdminRefillResult result)
 AdminAuthResult admin_authenticate(const char *username, const char *password, AdminSession *session)
 {
     if (session) {
-        memset(session, 0, sizeof(AdminSession));
+        security_secure_zero(session, sizeof(AdminSession));
     }
 
     if (!username || !password || !session) {
@@ -212,24 +212,24 @@ AdminAuthResult admin_authenticate(const char *username, const char *password, A
 
     AdminStatus st = admin_status_from_string(db_status);
     if (st == ADMIN_STATUS_INACTIVE) {
-        memset(db_hash, 0, sizeof(db_hash));
+        security_secure_zero(db_hash, sizeof(db_hash));
         return ADMIN_AUTH_ERR_ACCOUNT_INACTIVE;
     }
     if (st == ADMIN_STATUS_SUSPENDED) {
-        memset(db_hash, 0, sizeof(db_hash));
+        security_secure_zero(db_hash, sizeof(db_hash));
         return ADMIN_AUTH_ERR_ACCOUNT_SUSPENDED;
     }
 
     /* Hash entered password and compare in constant time */
     char entered_hash[65] = {0};
     if (!security_hash_sha256(password, entered_hash, sizeof(entered_hash))) {
-        memset(db_hash, 0, sizeof(db_hash));
+        security_secure_zero(db_hash, sizeof(db_hash));
         return ADMIN_AUTH_ERR_DB_FAILURE;
     }
 
     bool match = security_constant_time_compare(entered_hash, db_hash);
-    memset(entered_hash, 0, sizeof(entered_hash));
-    memset(db_hash, 0, sizeof(db_hash));
+    security_secure_zero(entered_hash, sizeof(entered_hash));
+    security_secure_zero(db_hash, sizeof(db_hash));
 
     if (!match) {
         return ADMIN_AUTH_ERR_INVALID_CREDENTIALS;
@@ -254,8 +254,10 @@ AdminAuthResult admin_authenticate(const char *username, const char *password, A
 
     /* Populate AdminSession */
     session->admin_id = db_id;
-    strncpy(session->username, db_username, sizeof(session->username) - 1);
-    strncpy(session->full_name, db_name, sizeof(session->full_name) - 1);
+    strncpy(session->username, db_username, sizeof(session->username));
+    session->username[sizeof(session->username) - 1] = '\0';
+    strncpy(session->full_name, db_name, sizeof(session->full_name));
+    session->full_name[sizeof(session->full_name) - 1] = '\0';
     session->role = admin_role_from_string(db_role);
     session->status = st;
     session->is_authenticated = true;
@@ -266,7 +268,7 @@ AdminAuthResult admin_authenticate(const char *username, const char *password, A
 void admin_logout(AdminSession *session)
 {
     if (session) {
-        memset(session, 0, sizeof(AdminSession));
+        security_secure_zero(session, sizeof(AdminSession));
     }
 }
 
@@ -342,12 +344,12 @@ bool admin_get_customers(const AdminSession *session, AdminCustomerList *list)
     while (mysql_stmt_fetch(stmt) == 0 && list->count < ADMIN_MAX_CUSTOMERS) {
         AdminCustomerItem *item = &list->items[list->count++];
         item->customer_id = cid;
-        strncpy(item->customer_number, cnum, sizeof(item->customer_number) - 1);
-        strncpy(item->full_name, name, sizeof(item->full_name) - 1);
-        strncpy(item->email, email, sizeof(item->email) - 1);
-        strncpy(item->phone, phone, sizeof(item->phone) - 1);
-        strncpy(item->status, status, sizeof(item->status) - 1);
-        strncpy(item->created_at, dt, sizeof(item->created_at) - 1);
+        snprintf(item->customer_number, sizeof(item->customer_number), "%s", cnum);
+        snprintf(item->full_name, sizeof(item->full_name), "%s", name);
+        snprintf(item->email, sizeof(item->email), "%s", email);
+        snprintf(item->phone, sizeof(item->phone), "%s", phone);
+        snprintf(item->status, sizeof(item->status), "%s", status);
+        snprintf(item->created_at, sizeof(item->created_at), "%s", dt);
     }
 
     mysql_stmt_free_result(stmt);
@@ -430,10 +432,10 @@ bool admin_get_customer_accounts(const AdminSession *session, uint64_t customer_
         AdminAccountItem *item = &list->items[list->count++];
         item->account_id = aid;
         item->customer_id = cust_id;
-        strncpy(item->account_number, anum, sizeof(item->account_number) - 1);
-        strncpy(item->account_type, atype, sizeof(item->account_type) - 1);
-        strncpy(item->balance, bal, sizeof(item->balance) - 1);
-        strncpy(item->status, stat, sizeof(item->status) - 1);
+        snprintf(item->account_number, sizeof(item->account_number), "%s", anum);
+        snprintf(item->account_type, sizeof(item->account_type), "%s", atype);
+        snprintf(item->balance, sizeof(item->balance), "%s", bal);
+        snprintf(item->status, sizeof(item->status), "%s", stat);
     }
 
     mysql_stmt_free_result(stmt);
@@ -515,9 +517,9 @@ bool admin_get_account_cards(const AdminSession *session, uint64_t account_id, A
         AdminCardItem *item = &list->items[list->count++];
         item->card_id = card_id;
         item->account_id = acc_id;
-        strncpy(item->card_number, cnum, sizeof(item->card_number) - 1);
-        strncpy(item->status, cstatus, sizeof(item->status) - 1);
-        strncpy(item->expiry_date, exp, sizeof(item->expiry_date) - 1);
+        snprintf(item->card_number, sizeof(item->card_number), "%s", cnum);
+        snprintf(item->status, sizeof(item->status), "%s", cstatus);
+        snprintf(item->expiry_date, sizeof(item->expiry_date), "%s", exp);
         item->failed_pin_attempts = failed_attempts;
     }
 
@@ -535,13 +537,21 @@ AdminCardOpResult admin_block_card(const AdminSession *session, uint64_t card_id
     MYSQL *conn = db_get_connection();
     if (!conn) return ADMIN_CARD_OP_ERR_DB_FAILURE;
 
-    /* Query current card status */
-    const char *sel_query = "SELECT card_status FROM cards WHERE card_id = ? LIMIT 1";
+    if (!db_transaction_begin()) {
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
+    /* Query current card status with row locking */
+    const char *sel_query = "SELECT card_status FROM cards WHERE card_id = ? FOR UPDATE";
     MYSQL_STMT *sel_stmt = mysql_stmt_init(conn);
-    if (!sel_stmt) return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    if (!sel_stmt) {
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
 
     if (mysql_stmt_prepare(sel_stmt, sel_query, (unsigned long)strlen(sel_query)) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -553,6 +563,7 @@ AdminCardOpResult admin_block_card(const AdminSession *session, uint64_t card_id
 
     if (mysql_stmt_bind_param(sel_stmt, b_in) != 0 || mysql_stmt_execute(sel_stmt) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -567,12 +578,14 @@ AdminCardOpResult admin_block_card(const AdminSession *session, uint64_t card_id
 
     if (mysql_stmt_bind_result(sel_stmt, b_out) != 0 || mysql_stmt_store_result(sel_stmt) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
     if (mysql_stmt_fetch(sel_stmt) != 0) {
         mysql_stmt_free_result(sel_stmt);
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_NOT_FOUND;
     }
 
@@ -580,19 +593,50 @@ AdminCardOpResult admin_block_card(const AdminSession *session, uint64_t card_id
     mysql_stmt_close(sel_stmt);
 
     if (strcmp(cur_status, "BLOCKED") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_ALREADY_BLOCKED;
     }
     if (strcmp(cur_status, "EXPIRED") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_EXPIRED;
     }
     if (strcmp(cur_status, "CANCELLED") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_CANCELLED;
     }
     if (strcmp(cur_status, "ACTIVE") != 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
-    if (!card_update_status(card_id, CARD_STATUS_BLOCKED)) {
+    const char *upd_query = "UPDATE cards SET card_status = 'BLOCKED' WHERE card_id = ?";
+    MYSQL_STMT *upd_stmt = mysql_stmt_init(conn);
+    if (!upd_stmt) {
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
+    if (mysql_stmt_prepare(upd_stmt, upd_query, (unsigned long)strlen(upd_query)) != 0) {
+        mysql_stmt_close(upd_stmt);
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
+    MYSQL_BIND b_u[1];
+    memset(b_u, 0, sizeof(b_u));
+    b_u[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    b_u[0].buffer = &cid;
+
+    if (mysql_stmt_bind_param(upd_stmt, b_u) != 0 || mysql_stmt_execute(upd_stmt) != 0) {
+        mysql_stmt_close(upd_stmt);
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
+    mysql_stmt_close(upd_stmt);
+
+    if (!db_transaction_commit()) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -608,13 +652,21 @@ AdminCardOpResult admin_unblock_card(const AdminSession *session, uint64_t card_
     MYSQL *conn = db_get_connection();
     if (!conn) return ADMIN_CARD_OP_ERR_DB_FAILURE;
 
-    /* Query current card status */
-    const char *sel_query = "SELECT card_status FROM cards WHERE card_id = ? LIMIT 1";
+    if (!db_transaction_begin()) {
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
+    /* Query current card status with row locking */
+    const char *sel_query = "SELECT card_status FROM cards WHERE card_id = ? FOR UPDATE";
     MYSQL_STMT *sel_stmt = mysql_stmt_init(conn);
-    if (!sel_stmt) return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    if (!sel_stmt) {
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
 
     if (mysql_stmt_prepare(sel_stmt, sel_query, (unsigned long)strlen(sel_query)) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -626,6 +678,7 @@ AdminCardOpResult admin_unblock_card(const AdminSession *session, uint64_t card_
 
     if (mysql_stmt_bind_param(sel_stmt, b_in) != 0 || mysql_stmt_execute(sel_stmt) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -640,12 +693,14 @@ AdminCardOpResult admin_unblock_card(const AdminSession *session, uint64_t card_
 
     if (mysql_stmt_bind_result(sel_stmt, b_out) != 0 || mysql_stmt_store_result(sel_stmt) != 0) {
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
     if (mysql_stmt_fetch(sel_stmt) != 0) {
         mysql_stmt_free_result(sel_stmt);
         mysql_stmt_close(sel_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_NOT_FOUND;
     }
 
@@ -653,25 +708,33 @@ AdminCardOpResult admin_unblock_card(const AdminSession *session, uint64_t card_
     mysql_stmt_close(sel_stmt);
 
     if (strcmp(cur_status, "ACTIVE") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_ALREADY_ACTIVE;
     }
     if (strcmp(cur_status, "EXPIRED") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_EXPIRED;
     }
     if (strcmp(cur_status, "CANCELLED") == 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_CANNOT_ACTIVATE_CANCELLED;
     }
     if (strcmp(cur_status, "BLOCKED") != 0) {
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
     /* Unblock card: set status to ACTIVE and reset failed attempts to 0 */
     const char *upd_query = "UPDATE cards SET card_status = 'ACTIVE', failed_pin_attempts = 0 WHERE card_id = ?";
     MYSQL_STMT *upd_stmt = mysql_stmt_init(conn);
-    if (!upd_stmt) return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    if (!upd_stmt) {
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
 
     if (mysql_stmt_prepare(upd_stmt, upd_query, (unsigned long)strlen(upd_query)) != 0) {
         mysql_stmt_close(upd_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
@@ -682,10 +745,17 @@ AdminCardOpResult admin_unblock_card(const AdminSession *session, uint64_t card_
 
     if (mysql_stmt_bind_param(upd_stmt, b_u) != 0 || mysql_stmt_execute(upd_stmt) != 0) {
         mysql_stmt_close(upd_stmt);
+        db_transaction_rollback();
         return ADMIN_CARD_OP_ERR_DB_FAILURE;
     }
 
     mysql_stmt_close(upd_stmt);
+
+    if (!db_transaction_commit()) {
+        db_transaction_rollback();
+        return ADMIN_CARD_OP_ERR_DB_FAILURE;
+    }
+
     return ADMIN_CARD_OP_SUCCESS;
 }
 
@@ -849,20 +919,20 @@ bool admin_get_transactions(const AdminSession *session,
     while (mysql_stmt_fetch(stmt) == 0 && list->count < ADMIN_MAX_TRANSACTIONS) {
         AdminTransactionItem *item = &list->items[list->count++];
         item->transaction_id = tid;
-        strncpy(item->transaction_reference, tref, sizeof(item->transaction_reference) - 1);
+        snprintf(item->transaction_reference, sizeof(item->transaction_reference), "%s", tref);
         item->account_id = aid;
-        strncpy(item->account_number, anum, sizeof(item->account_number) - 1);
-        strncpy(item->transaction_type, ttype, sizeof(item->transaction_type) - 1);
-        strncpy(item->amount, amt, sizeof(item->amount) - 1);
-        strncpy(item->balance_before, bbef, sizeof(item->balance_before) - 1);
-        strncpy(item->balance_after, baft, sizeof(item->balance_after) - 1);
+        snprintf(item->account_number, sizeof(item->account_number), "%s", anum);
+        snprintf(item->transaction_type, sizeof(item->transaction_type), "%s", ttype);
+        snprintf(item->amount, sizeof(item->amount), "%s", amt);
+        snprintf(item->balance_before, sizeof(item->balance_before), "%s", bbef);
+        snprintf(item->balance_after, sizeof(item->balance_after), "%s", baft);
         item->has_related_account = !is_rel_null;
         item->related_account_id = is_rel_null ? 0 : rel_aid;
         item->has_atm_id = !is_atm_null;
         item->atm_id = is_atm_null ? 0 : atmid;
-        strncpy(item->status, tstat, sizeof(item->status) - 1);
-        strncpy(item->description, desc, sizeof(item->description) - 1);
-        strncpy(item->created_at, dt, sizeof(item->created_at) - 1);
+        snprintf(item->status, sizeof(item->status), "%s", tstat);
+        snprintf(item->description, sizeof(item->description), "%s", desc);
+        snprintf(item->created_at, sizeof(item->created_at), "%s", dt);
     }
 
     mysql_stmt_free_result(stmt);

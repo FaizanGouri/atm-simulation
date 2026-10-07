@@ -34,4 +34,13 @@ bool security_constant_time_compare(const char *a, const char *b);
  */
 bool security_read_masked_input(const char *prompt, char *buffer, size_t max_len);
 
+/**
+ * Securely wipe a memory buffer using a compiler-resistant technique.
+ * Prevents dead-store elimination from optimizing away memory clearing.
+ *
+ * @param ptr Pointer to memory buffer to wipe.
+ * @param len Size of buffer in bytes.
+ */
+void security_secure_zero(void *ptr, size_t len);
+
 #endif /* SECURITY_H */

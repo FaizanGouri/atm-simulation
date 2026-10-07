@@ -180,9 +180,19 @@ bool security_read_masked_input(const char *prompt, char *buffer, size_t max_len
 #ifdef _WIN32
     int ch;
     while ((ch = _getch()) != '\r' && ch != '\n' && ch != EOF) {
-        if (ch == '\b') {
+        if (ch == 0 || ch == 224) {
+            /* Extended key prefix (arrow, function, or navigation key): discard next scan code */
+            (void)_getch();
+            continue;
+        } else if (ch == 27 || ch == 3) {
+            /* Escape (27) or Ctrl+C (3): cancel input */
+            printf("\n");
+            security_secure_zero(buffer, max_len);
+            return false;
+        } else if (ch == '\b') {
             if (idx > 0) {
                 idx--;
+                buffer[idx] = '\0';
                 printf("\b \b");
                 fflush(stdout);
             }
@@ -214,5 +224,19 @@ bool security_read_masked_input(const char *prompt, char *buffer, size_t max_len
 #endif
 
     buffer[idx] = '\0';
-    return (idx > 0);
+    if (idx == 0) {
+        security_secure_zero(buffer, max_len);
+        return false;
+    }
+    return true;
 }
+
+void security_secure_zero(void *ptr, size_t len)
+{
+    if (!ptr || len == 0) return;
+    volatile unsigned char *p = (volatile unsigned char *)ptr;
+    while (len--) {
+        *p++ = 0;
+    }
+}
+

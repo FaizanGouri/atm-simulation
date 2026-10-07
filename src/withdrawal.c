@@ -197,8 +197,9 @@ WithdrawalResult withdrawal_execute(uint64_t account_id,
 
     /* 2. Check account balance */
     int64_t cur_bal_paise = 0;
-    if (!utils_parse_amount_to_paise(cur_bal_str, &cur_bal_paise)) {
-        cur_bal_paise = 0;
+    if (!utils_parse_balance_to_paise(cur_bal_str, &cur_bal_paise)) {
+        db_transaction_rollback();
+        return WITHDRAWAL_ERR_SYSTEM;
     }
 
     if (cur_bal_paise < withdraw_paise) {
@@ -208,8 +209,9 @@ WithdrawalResult withdrawal_execute(uint64_t account_id,
 
     /* 3. Check daily withdrawal limit */
     int64_t daily_limit_paise = 0;
-    if (!utils_parse_amount_to_paise(daily_limit_str, &daily_limit_paise)) {
-        daily_limit_paise = 0;
+    if (!utils_parse_balance_to_paise(daily_limit_str, &daily_limit_paise)) {
+        db_transaction_rollback();
+        return WITHDRAWAL_ERR_SYSTEM;
     }
 
     int64_t today_withdrawn_paise = 0;

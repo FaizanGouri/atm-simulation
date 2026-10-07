@@ -1,4 +1,5 @@
 #include "database.h"
+#include "security.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,11 +47,13 @@ static void load_from_ini_file(DBConfig *config, const char *filepath)
     while (fgets(line, sizeof(line), fp)) {
         trim_whitespace(line);
         if (line[0] == '#' || line[0] == ';' || line[0] == '[' || line[0] == '\0') {
+            security_secure_zero(line, sizeof(line));
             continue;
         }
 
         char *eq = strchr(line, '=');
         if (!eq) {
+            security_secure_zero(line, sizeof(line));
             continue;
         }
 
@@ -75,6 +78,7 @@ static void load_from_ini_file(DBConfig *config, const char *filepath)
             strncpy(config->database, val, sizeof(config->database) - 1);
             config->database[sizeof(config->database) - 1] = '\0';
         }
+        security_secure_zero(line, sizeof(line));
     }
 
     fclose(fp);
@@ -162,14 +166,19 @@ bool db_connect(const DBConfig *config)
     /* Enforce utf8mb4 encoding */
     mysql_options(g_db_conn, MYSQL_SET_CHARSET_NAME, "utf8mb4");
 
-    if (!mysql_real_connect(g_db_conn,
-                            local_cfg.host,
-                            local_cfg.user,
-                            local_cfg.password,
-                            local_cfg.database,
-                            local_cfg.port,
-                            NULL,
-                            CLIENT_MULTI_STATEMENTS)) {
+    bool connected = (mysql_real_connect(g_db_conn,
+                                         local_cfg.host,
+                                         local_cfg.user,
+                                         local_cfg.password,
+                                         local_cfg.database,
+                                         local_cfg.port,
+                                         NULL,
+                                         0) != NULL);
+
+    /* Immediately wipe temporary local password buffer */
+    security_secure_zero(local_cfg.password, sizeof(local_cfg.password));
+
+    if (!connected) {
         set_last_error(mysql_error(g_db_conn), mysql_errno(g_db_conn));
         mysql_close(g_db_conn);
         g_db_conn = NULL;

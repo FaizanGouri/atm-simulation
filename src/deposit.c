@@ -116,9 +116,9 @@ DepositResult deposit_execute(uint64_t account_id,
 
     /* 2. Compute new balance in exact integer paise */
     int64_t cur_bal_paise = 0;
-    if (!utils_parse_amount_to_paise(cur_bal_str, &cur_bal_paise)) {
-        /* If 0.00, parse might return false or 0 */
-        cur_bal_paise = 0;
+    if (!utils_parse_balance_to_paise(cur_bal_str, &cur_bal_paise)) {
+        db_transaction_rollback();
+        return DEPOSIT_ERR_TRANSACTION_FAILED;
     }
 
     int64_t new_bal_paise = cur_bal_paise + deposit_paise;

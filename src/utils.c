@@ -67,6 +67,55 @@ bool utils_parse_amount_to_paise(const char *amount_str, int64_t *out_paise)
     return true;
 }
 
+bool utils_parse_balance_to_paise(const char *balance_str, int64_t *out_paise)
+{
+    if (!balance_str || !out_paise) return false;
+
+    /* Trim leading whitespace */
+    while (*balance_str == ' ' || *balance_str == '\t') balance_str++;
+    if (*balance_str == '\0' || *balance_str == '-') return false;
+
+    int64_t rupees = 0;
+    int64_t paise = 0;
+    const char *p = balance_str;
+
+    if (!isdigit((unsigned char)*p)) return false;
+
+    while (*p && *p != '.') {
+        if (!isdigit((unsigned char)*p)) {
+            /* Check if trailing whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p == '\0') break;
+            return false;
+        }
+        int digit = *p - '0';
+        if (rupees > 100000000000LL) return false; /* Overflow check */
+        rupees = rupees * 10 + digit;
+        p++;
+    }
+
+    if (*p == '.') {
+        p++;
+        if (!isdigit((unsigned char)*p)) return false;
+        paise = (*p - '0') * 10;
+        p++;
+        if (*p) {
+            if (!isdigit((unsigned char)*p)) return false;
+            paise += (*p - '0');
+            p++;
+            /* Check trailing whitespace */
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p != '\0') return false; /* More than 2 decimals or invalid chars */
+        }
+    }
+
+    int64_t total = (rupees * 100LL) + paise;
+    if (total < 0) return false;
+
+    *out_paise = total;
+    return true;
+}
+
 void utils_paise_to_decimal_str(int64_t paise, char *buffer, size_t buffer_size)
 {
     if (!buffer || buffer_size < 24) return;

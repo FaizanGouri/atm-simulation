@@ -61,7 +61,7 @@ void ui_display_balance_inquiry(const CustomerSession *session)
 
     AccountRecord acc;
     if (!account_get_by_id(session->account_id, &acc)) {
-        printf("\n[ERROR] Unable to retrieve account balance: %s\n", db_get_last_error(NULL));
+        printf("\n[ERROR] Unable to retrieve account balance. Please try again later.\n");
         return;
     }
 
@@ -489,7 +489,7 @@ void ui_handle_mini_statement(const CustomerSession *session)
 
     StatementList list;
     if (!transaction_get_statement(session->account_id, limit, &list)) {
-        printf("\n[ERROR] Unable to retrieve transaction history: %s\n", db_get_last_error(NULL));
+        printf("\n[ERROR] Unable to retrieve transaction history. Please try again later.\n");
         return;
     }
 
@@ -514,31 +514,31 @@ void ui_handle_pin_change(CustomerSession *session)
 
     if (!security_read_masked_input("Current PIN: ", current_pin, sizeof(current_pin))) {
         printf("\nPIN change cancelled.\n");
-        memset(current_pin, 0, sizeof(current_pin));
+        security_secure_zero(current_pin, sizeof(current_pin));
         return;
     }
 
     if (!security_read_masked_input("New PIN: ", new_pin, sizeof(new_pin))) {
         printf("\nPIN change cancelled.\n");
-        memset(current_pin, 0, sizeof(current_pin));
-        memset(new_pin, 0, sizeof(new_pin));
+        security_secure_zero(current_pin, sizeof(current_pin));
+        security_secure_zero(new_pin, sizeof(new_pin));
         return;
     }
 
     if (!security_read_masked_input("Confirm New PIN: ", confirm_pin, sizeof(confirm_pin))) {
         printf("\nPIN change cancelled.\n");
-        memset(current_pin, 0, sizeof(current_pin));
-        memset(new_pin, 0, sizeof(new_pin));
-        memset(confirm_pin, 0, sizeof(confirm_pin));
+        security_secure_zero(current_pin, sizeof(current_pin));
+        security_secure_zero(new_pin, sizeof(new_pin));
+        security_secure_zero(confirm_pin, sizeof(confirm_pin));
         return;
     }
 
     PinChangeResult result = auth_change_pin(session, current_pin, new_pin, confirm_pin);
 
     /* Zero all PIN buffers immediately */
-    memset(current_pin, 0, sizeof(current_pin));
-    memset(new_pin, 0, sizeof(new_pin));
-    memset(confirm_pin, 0, sizeof(confirm_pin));
+    security_secure_zero(current_pin, sizeof(current_pin));
+    security_secure_zero(new_pin, sizeof(new_pin));
+    security_secure_zero(confirm_pin, sizeof(confirm_pin));
 
     if (result == PIN_CHANGE_SUCCESS) {
         printf("\nPIN changed successfully.\n");
@@ -611,12 +611,12 @@ bool ui_handle_admin_login(AdminSession *session)
     char password_buf[64] = {0};
     if (!security_read_masked_input("Password: ", password_buf, sizeof(password_buf))) {
         printf("\nLogin cancelled.\n");
-        memset(password_buf, 0, sizeof(password_buf));
+        security_secure_zero(password_buf, sizeof(password_buf));
         return false;
     }
 
     AdminAuthResult res = admin_authenticate(username_buf, password_buf, session);
-    memset(password_buf, 0, sizeof(password_buf));
+    security_secure_zero(password_buf, sizeof(password_buf));
 
     if (res == ADMIN_AUTH_SUCCESS) {
         printf("\n========================================\n");
