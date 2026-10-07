@@ -1,0 +1,1402 @@
+```latex
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{float}
+
+\geometry{margin=1in}
+
+\title{
+    \textbf{ATM Management and Banking Transaction Simulation System}\\
+    \large MCA Final Year Project Specification
+}
+
+\author{MCA Final Project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+
+% ============================================================
+\section{Project Overview}
+% ============================================================
+
+The project is a terminal-based ATM Management and Banking Transaction
+Simulation System developed entirely in the C programming language.
+
+The system will simulate the major operations performed by a real ATM,
+including card authentication, PIN verification, balance enquiry, cash
+withdrawal, cash deposit, fund transfer, mini statement, PIN change,
+transaction management, ATM cash management, and administrative operations.
+
+The application will use a MySQL relational database for persistent data
+storage.
+
+The project must be developed as a modular C application and must not use
+C++, C\#, Java, Python, PHP, JavaScript, or a web frontend.
+
+
+% ============================================================
+\section{Technology Stack}
+% ============================================================
+
+\begin{longtable}{p{0.3\textwidth} p{0.6\textwidth}}
+\toprule
+\textbf{Component} & \textbf{Technology} \\
+\midrule
+Programming Language & C \\
+User Interface & Terminal / Command Line Interface (CLI) \\
+Database & MySQL \\
+Database Connectivity & MySQL C API / MySQL Connector for C \\
+Operating System & Windows / Linux compatible where practical \\
+Compiler & GCC or compatible C compiler \\
+Version Control & Git (optional but recommended) \\
+\bottomrule
+\end{longtable}
+
+
+% ============================================================
+\section{Project Objectives}
+% ============================================================
+
+The primary objectives are:
+
+\begin{enumerate}
+    \item Develop a realistic ATM simulation using C.
+    \item Demonstrate modular programming in C.
+    \item Demonstrate relational database concepts using MySQL.
+    \item Implement secure card and PIN authentication.
+    \item Implement banking transaction operations.
+    \item Maintain persistent customer and transaction data.
+    \item Demonstrate database transactions and rollback.
+    \item Implement ATM cash inventory management.
+    \item Implement administrative management functions.
+    \item Provide proper input validation and error handling.
+    \item Generate transaction records and mini statements.
+    \item Produce an academically presentable MCA final-year project.
+\end{enumerate}
+
+
+% ============================================================
+\section{Project Scope}
+% ============================================================
+
+The system will contain two primary roles:
+
+\begin{enumerate}
+    \item Customer
+    \item Administrator
+\end{enumerate}
+
+\subsection{Customer Scope}
+
+Customers will be able to:
+
+\begin{itemize}
+    \item Insert/use a registered card.
+    \item Authenticate using a PIN.
+    \item View account balance.
+    \item Withdraw cash.
+    \item Deposit cash.
+    \item Transfer funds.
+    \item View mini statement.
+    \item Change PIN.
+    \item Logout safely.
+\end{itemize}
+
+\subsection{Administrator Scope}
+
+Administrators will be able to:
+
+\begin{itemize}
+    \item Login to the administration panel.
+    \item View customers.
+    \item View accounts.
+    \item Search accounts.
+    \item Create customer/account records.
+    \item Block or unblock cards.
+    \item View transactions.
+    \item View ATM cash inventory.
+    \item Refill ATM cash.
+    \item View transaction statistics.
+\end{itemize}
+
+
+% ============================================================
+\section{High-Level System Architecture}
+% ============================================================
+
+The application will follow a modular layered architecture.
+
+\begin{verbatim}
+                    ATM SIMULATION SYSTEM
+                            |
+                    C Terminal Application
+                            |
+          +-----------------+------------------+
+          |                 |                  |
+     Authentication      Customer           Admin
+          Module         Operations         Operations
+          |                 |                  |
+          +-----------------+------------------+
+                            |
+                     Business Logic
+                            |
+                     Database Layer
+                            |
+                         MySQL
+\end{verbatim}
+
+The system should separate:
+
+\begin{enumerate}
+    \item User Interface logic
+    \item Authentication logic
+    \item Business logic
+    \item Database operations
+    \item Utility functions
+\end{enumerate}
+
+Database queries should not be scattered throughout every source file.
+
+
+% ============================================================
+\section{Recommended Project Structure}
+% ============================================================
+
+The project should use the following structure:
+
+\begin{verbatim}
+ATM-Simulation/
+|
++-- src/
+|   +-- main.c
+|   +-- auth.c
+|   +-- customer.c
+|   +-- account.c
+|   +-- card.c
+|   +-- transaction.c
+|   +-- withdrawal.c
+|   +-- deposit.c
+|   +-- transfer.c
+|   +-- atm.c
+|   +-- admin.c
+|   +-- database.c
+|   +-- security.c
+|   +-- ui.c
+|   +-- receipt.c
+|   +-- validation.c
+|   +-- utils.c
+|
++-- include/
+|   +-- auth.h
+|   +-- customer.h
+|   +-- account.h
+|   +-- card.h
+|   +-- transaction.h
+|   +-- withdrawal.h
+|   +-- deposit.h
+|   +-- transfer.h
+|   +-- atm.h
+|   +-- admin.h
+|   +-- database.h
+|   +-- security.h
+|   +-- ui.h
+|   +-- receipt.h
+|   +-- validation.h
+|   +-- utils.h
+|
++-- database/
+|   +-- schema.sql
+|   +-- seed.sql
+|
++-- receipts/
+|
++-- tests/
+|
++-- docs/
+|
++-- Makefile
+|
++-- README.md
+\end{verbatim}
+
+
+% ============================================================
+\section{Database Design}
+% ============================================================
+
+The system will use MySQL as the relational database management system.
+
+The database name should be:
+
+\begin{verbatim}
+atm_simulation
+\end{verbatim}
+
+The database should contain the following major tables:
+
+\begin{enumerate}
+    \item customers
+    \item accounts
+    \item cards
+    \item beneficiaries
+    \item transactions
+    \item atm
+    \item atm\_cash
+    \item admins
+\end{enumerate}
+
+
+% ============================================================
+\subsection{Customers Table}
+% ============================================================
+
+\begin{verbatim}
+customers
+---------
+customer_id       PRIMARY KEY
+full_name
+mobile
+email
+address
+created_at
+status
+\end{verbatim}
+
+Possible status values:
+
+\begin{verbatim}
+ACTIVE
+INACTIVE
+\end{verbatim}
+
+
+% ============================================================
+\subsection{Accounts Table}
+% ============================================================
+
+\begin{verbatim}
+accounts
+--------
+account_id        PRIMARY KEY
+customer_id       FOREIGN KEY
+account_number    UNIQUE
+account_type
+balance
+daily_limit
+account_status
+created_at
+\end{verbatim}
+
+Possible account types:
+
+\begin{verbatim}
+SAVINGS
+CURRENT
+\end{verbatim}
+
+Possible account statuses:
+
+\begin{verbatim}
+ACTIVE
+BLOCKED
+CLOSED
+\end{verbatim}
+
+
+% ============================================================
+\subsection{Cards Table}
+% ============================================================
+
+\begin{verbatim}
+cards
+-----
+card_id
+account_id
+card_number       UNIQUE
+pin_hash
+failed_attempts
+card_status
+issue_date
+expiry_date
+\end{verbatim}
+
+Possible card statuses:
+
+\begin{verbatim}
+ACTIVE
+BLOCKED
+EXPIRED
+CANCELLED
+\end{verbatim}
+
+The PIN must not be stored as plain text.
+
+
+% ============================================================
+\subsection{Beneficiaries Table}
+% ============================================================
+
+\begin{verbatim}
+beneficiaries
+-------------
+beneficiary_id
+account_id
+beneficiary_account_number
+beneficiary_name
+nickname
+status
+created_at
+\end{verbatim}
+
+
+% ============================================================
+\subsection{Transactions Table}
+% ============================================================
+
+\begin{verbatim}
+transactions
+------------
+transaction_id
+transaction_reference
+account_id
+transaction_type
+amount
+balance_before
+balance_after
+description
+status
+transaction_date
+\end{verbatim}
+
+Transaction types may include:
+
+\begin{verbatim}
+WITHDRAWAL
+DEPOSIT
+TRANSFER
+BALANCE_ENQUIRY
+PIN_CHANGE
+\end{verbatim}
+
+Transaction status:
+
+\begin{verbatim}
+SUCCESS
+FAILED
+CANCELLED
+\end{verbatim}
+
+
+% ============================================================
+\subsection{ATM Table}
+% ============================================================
+
+\begin{verbatim}
+atm
+---
+atm_id
+atm_code
+location
+status
+created_at
+\end{verbatim}
+
+
+% ============================================================
+\subsection{ATM Cash Table}
+% ============================================================
+
+The ATM should maintain physical cash inventory by denomination.
+
+\begin{verbatim}
+atm_cash
+--------
+cash_id
+atm_id
+denomination
+quantity
+updated_at
+\end{verbatim}
+
+Example:
+
+\begin{verbatim}
+Denomination     Quantity
+
+Rs. 500             120
+Rs. 200              80
+Rs. 100             100
+Rs. 50               40
+\end{verbatim}
+
+
+% ============================================================
+\subsection{Admins Table}
+% ============================================================
+
+\begin{verbatim}
+admins
+------
+admin_id
+username
+password_hash
+status
+created_at
+\end{verbatim}
+
+
+% ============================================================
+\section{Database Relationships}
+% ============================================================
+
+The primary relationships are:
+
+\begin{verbatim}
+CUSTOMER
+   |
+   | 1:N
+   v
+ACCOUNT
+   |
+   | 1:N
+   +----------> CARD
+   |
+   +----------> TRANSACTION
+   |
+   +----------> BENEFICIARY
+
+ATM
+ |
+ +----------> ATM_CASH
+
+ADMIN
+ |
+ +----------> ADMIN OPERATIONS
+\end{verbatim}
+
+
+% ============================================================
+\section{Customer Authentication Flow}
+% ============================================================
+
+The customer authentication process must be:
+
+\begin{verbatim}
+START
+  |
+  v
+INSERT CARD
+  |
+  v
+ENTER CARD NUMBER
+  |
+  v
+CARD EXISTS?
+  |
+  +---- NO ----> INVALID CARD
+  |
+ YES
+  |
+  v
+CHECK CARD STATUS
+  |
+  +---- BLOCKED/EXPIRED/CANCELLED
+  |              |
+  |              v
+  |         DENY ACCESS
+  |
+ ACTIVE
+  |
+  v
+ENTER PIN
+  |
+  v
+VERIFY PIN HASH
+  |
+  +---- WRONG ----> INCREMENT FAILED ATTEMPTS
+  |                      |
+  |                      +---- 3 attempts ----> BLOCK CARD
+  |
+ CORRECT
+  |
+  v
+RESET FAILED ATTEMPTS
+  |
+  v
+CREATE SESSION
+  |
+  v
+CUSTOMER MAIN MENU
+\end{verbatim}
+
+
+% ============================================================
+\section{PIN Security Rules}
+% ============================================================
+
+The following rules are mandatory:
+
+\begin{enumerate}
+    \item Never store a PIN in plain text.
+    \item Store a secure representation of the PIN.
+    \item Do not display the entered PIN on screen.
+    \item Maximum 3 failed PIN attempts.
+    \item Block the card after 3 consecutive failed attempts.
+    \item Reset failed attempts after successful authentication.
+    \item PIN change requires verification of the current PIN.
+\end{enumerate}
+
+
+% ============================================================
+\section{Customer Main Menu}
+% ============================================================
+
+After successful authentication:
+
+\begin{verbatim}
+========================================
+             ATM MAIN MENU
+========================================
+
+1. Balance Enquiry
+2. Cash Withdrawal
+3. Cash Deposit
+4. Fund Transfer
+5. Mini Statement
+6. Change PIN
+7. Logout
+
+Enter Choice:
+\end{verbatim}
+
+
+% ============================================================
+\section{Balance Enquiry}
+% ============================================================
+
+The system should:
+
+\begin{enumerate}
+    \item Identify the authenticated account.
+    \item Retrieve current balance.
+    \item Display balance.
+    \item Optionally create a balance enquiry transaction record.
+\end{enumerate}
+
+
+% ============================================================
+\section{Cash Withdrawal}
+% ============================================================
+
+Withdrawal must validate:
+
+\begin{enumerate}
+    \item Account status.
+    \item Valid withdrawal amount.
+    \item Minimum withdrawal amount.
+    \item Maximum withdrawal amount.
+    \item Daily withdrawal limit.
+    \item Sufficient account balance.
+    \item Sufficient ATM cash.
+    \item Available denominations.
+\end{enumerate}
+
+The withdrawal operation should use a database transaction.
+
+\begin{verbatim}
+BEGIN TRANSACTION
+
+1. Validate balance
+2. Validate ATM cash
+3. Calculate denomination distribution
+4. Update account balance
+5. Update ATM cash inventory
+6. Insert transaction record
+
+COMMIT
+\end{verbatim}
+
+If any step fails:
+
+\begin{verbatim}
+ROLLBACK
+\end{verbatim}
+
+
+% ============================================================
+\section{ATM Denomination Logic}
+% ============================================================
+
+The ATM should not simply reduce the total cash amount.
+
+It should calculate actual available notes.
+
+Example:
+
+For a withdrawal of Rs. 2700:
+
+\begin{verbatim}
+Rs. 500 x 5 = Rs. 2500
+Rs. 100 x 2 = Rs.  200
+-----------------------
+Total       = Rs. 2700
+\end{verbatim}
+
+The algorithm must ensure that the required combination is actually
+available in the ATM.
+
+If the exact amount cannot be formed from available denominations,
+the withdrawal should be rejected rather than incorrectly modifying
+the account balance.
+
+
+% ============================================================
+\section{Cash Deposit}
+% ============================================================
+
+Deposit flow:
+
+\begin{verbatim}
+ENTER AMOUNT
+     |
+VALIDATE AMOUNT
+     |
+BEGIN TRANSACTION
+     |
+UPDATE ACCOUNT BALANCE
+     |
+UPDATE ATM CASH
+     |
+INSERT TRANSACTION
+     |
+COMMIT
+\end{verbatim}
+
+The system must reject:
+
+\begin{verbatim}
+0
+negative values
+non-numeric values
+unreasonably large values
+\end{verbatim}
+
+
+% ============================================================
+\section{Fund Transfer}
+% ============================================================
+
+The customer should be able to transfer money to another valid account.
+
+Flow:
+
+\begin{verbatim}
+ENTER BENEFICIARY / ACCOUNT NUMBER
+              |
+        VALIDATE ACCOUNT
+              |
+        ENTER TRANSFER AMOUNT
+              |
+       CHECK AVAILABLE BALANCE
+              |
+       BEGIN TRANSACTION
+              |
+       DEBIT SENDER ACCOUNT
+              |
+       CREDIT RECEIVER ACCOUNT
+              |
+       INSERT TRANSACTION RECORDS
+              |
+            COMMIT
+\end{verbatim}
+
+If any step fails:
+
+\begin{verbatim}
+ROLLBACK
+\end{verbatim}
+
+The sender and receiver balances must never become inconsistent.
+
+
+% ============================================================
+\section{Mini Statement}
+% ============================================================
+
+The system should display the latest 5 or 10 transactions.
+
+Example:
+
+\begin{verbatim}
+---------------------------------------------------------
+DATE          TYPE             AMOUNT        BALANCE
+---------------------------------------------------------
+07-10-2026    WITHDRAWAL       Rs. 5000      Rs. 20000
+07-10-2026    DEPOSIT          Rs. 3000      Rs. 25000
+06-10-2026    TRANSFER         Rs. 1500      Rs. 22000
+05-10-2026    WITHDRAWAL       Rs. 2000      Rs. 23500
+04-10-2026    DEPOSIT          Rs. 5000      Rs. 25500
+---------------------------------------------------------
+\end{verbatim}
+
+
+% ============================================================
+\section{PIN Change}
+% ============================================================
+
+PIN change process:
+
+\begin{verbatim}
+ENTER CURRENT PIN
+       |
+VERIFY CURRENT PIN
+       |
+ENTER NEW PIN
+       |
+CONFIRM NEW PIN
+       |
+CHECK NEW PIN VALIDITY
+       |
+STORE NEW PIN HASH
+       |
+SUCCESS
+\end{verbatim}
+
+The system must reject:
+
+\begin{itemize}
+    \item Incorrect current PIN.
+    \item New PIN and confirmation mismatch.
+    \item Invalid PIN length.
+    \item Weak PIN patterns where appropriate.
+\end{itemize}
+
+
+% ============================================================
+\section{Session Management}
+% ============================================================
+
+Once the user successfully authenticates, the application should maintain
+a session containing the authenticated account/card information.
+
+The user must not be asked for the card number again for every transaction.
+
+The session ends when:
+
+\begin{enumerate}
+    \item The user selects Logout.
+    \item The session expires due to inactivity.
+    \item A critical authentication/security event occurs.
+\end{enumerate}
+
+
+% ============================================================
+\section{Card States}
+% ============================================================
+
+The system should support:
+
+\begin{verbatim}
+ACTIVE
+BLOCKED
+EXPIRED
+CANCELLED
+\end{verbatim}
+
+Blocked, expired, or cancelled cards must not be allowed to perform
+transactions.
+
+
+% ============================================================
+\section{Transaction IDs}
+% ============================================================
+
+Every financial transaction should receive a unique transaction
+reference.
+
+Example:
+
+\begin{verbatim}
+TXN20261007142301
+\end{verbatim}
+
+Transaction references must be unique.
+
+
+% ============================================================
+\section{Receipt Generation}
+% ============================================================
+
+After successful financial transactions, the system should optionally
+generate a text receipt.
+
+Example:
+
+\begin{verbatim}
+========================================
+              XYZ BANK ATM
+========================================
+
+Transaction ID : TXN20261007142301
+Card Number    : XXXX XXXX XXXX 1234
+Transaction    : CASH WITHDRAWAL
+Amount         : Rs. 5,000
+Balance        : Rs. 20,000
+
+Date           : 07-10-2026
+Time           : 14:23:01
+Status         : SUCCESS
+
+        THANK YOU FOR BANKING
+========================================
+\end{verbatim}
+
+Receipts may be stored inside the \texttt{receipts/} directory.
+
+
+% ============================================================
+\section{Admin Panel}
+% ============================================================
+
+The administrator must authenticate before accessing administrative
+operations.
+
+Admin menu:
+
+\begin{verbatim}
+========================================
+             ADMIN PANEL
+========================================
+
+1. View Customers
+2. Search Customer
+3. View Accounts
+4. Create Customer
+5. Create Account
+6. Block Card
+7. Unblock Card
+8. View Transactions
+9. ATM Cash Status
+10. Refill ATM
+11. Transaction Statistics
+12. Logout
+
+Enter Choice:
+\end{verbatim}
+
+
+% ============================================================
+\section{ATM Cash Management}
+% ============================================================
+
+The administrator should be able to view:
+
+\begin{verbatim}
+ATM CASH INVENTORY
+-----------------------------
+Rs. 500 : 120 notes
+Rs. 200 :  80 notes
+Rs. 100 : 100 notes
+Rs.  50 :  40 notes
+-----------------------------
+TOTAL   : Rs. 88,000
+\end{verbatim}
+
+The administrator should be able to refill the ATM.
+
+The system must never allow the ATM cash balance to become negative.
+
+
+% ============================================================
+\section{Transaction Statistics}
+% ============================================================
+
+The admin panel may display:
+
+\begin{verbatim}
+Today's Statistics
+------------------------------
+Total Transactions : 127
+Withdrawals        : 62
+Deposits           : 31
+Transfers          : 28
+Failed             : 6
+------------------------------
+ATM Cash           : Rs. 124500
+\end{verbatim}
+
+
+% ============================================================
+\section{Input Validation}
+% ============================================================
+
+Every user input must be validated.
+
+The program must safely handle:
+
+\begin{itemize}
+    \item Empty input.
+    \item Non-numeric input.
+    \item Negative numbers.
+    \item Zero values.
+    \item Very large values.
+    \item Invalid account numbers.
+    \item Invalid card numbers.
+    \item Invalid menu selections.
+\end{itemize}
+
+The program must not crash because of normal invalid user input.
+
+
+% ============================================================
+\section{Error Handling}
+% ============================================================
+
+The application must display clear error messages.
+
+Examples:
+
+\begin{verbatim}
+ERROR: Invalid card number.
+
+ERROR: Incorrect PIN.
+Attempts remaining: 2
+
+ERROR: Card is blocked.
+
+ERROR: Insufficient account balance.
+
+ERROR: ATM does not have sufficient cash.
+
+ERROR: Requested denomination combination is unavailable.
+
+ERROR: Beneficiary account does not exist.
+
+ERROR: Database operation failed.
+\end{verbatim}
+
+
+% ============================================================
+\section{Database Transaction and ACID Requirements}
+% ============================================================
+
+Financial operations must use database transactions where multiple
+database modifications must remain consistent.
+
+Examples include:
+
+\begin{itemize}
+    \item Cash withdrawal.
+    \item Cash deposit.
+    \item Fund transfer.
+    \item ATM cash update.
+\end{itemize}
+
+The implementation should demonstrate:
+
+\begin{verbatim}
+BEGIN
+COMMIT
+ROLLBACK
+\end{verbatim}
+
+The system must avoid situations where:
+
+\begin{verbatim}
+Account balance updated
+        +
+ATM cash not updated
+```
+
+or:
+
+\begin{verbatim}
+Sender debited
+        +
+Receiver not credited
+```
+
+These operations must be atomic.
+
+
+% ============================================================
+\section{Security Requirements}
+% ============================================================
+
+The following security practices should be implemented:
+
+\begin{enumerate}
+    \item PIN should not be stored in plain text.
+    \item Password/PIN input should be masked where practical.
+    \item SQL queries should use parameterized/prepared statements where
+          supported by the C MySQL API.
+    \item User input must not be directly concatenated into SQL queries.
+    \item Card status must be checked before transactions.
+    \item Account status must be checked before transactions.
+    \item Failed PIN attempts must be tracked.
+    \item Sensitive information should not be printed unnecessarily.
+\end{enumerate}
+
+
+% ============================================================
+\section{Terminal User Interface}
+% ============================================================
+
+The terminal interface should look professional despite being CLI based.
+
+Use:
+
+\begin{itemize}
+    \item Clear headings.
+    \item Consistent separators.
+    \item Numbered menus.
+    \item Success messages.
+    \item Error messages.
+    \item Confirmation messages.
+    \item Screen clearing where appropriate.
+    \item Safe cross-platform terminal behavior where practical.
+\end{itemize}
+
+Avoid depending heavily on emojis because terminal encoding can differ
+between systems.
+
+Example:
+
+\begin{verbatim}
++--------------------------------------+
+|          ATM SIMULATION              |
++--------------------------------------+
+|                                      |
+|        Welcome to XYZ Bank           |
+|                                      |
++--------------------------------------+
+\end{verbatim}
+
+
+% ============================================================
+\section{Application Flow}
+% ============================================================
+
+Main application:
+
+\begin{verbatim}
+START
+ |
+ v
+DATABASE CONNECTION
+ |
+ +---- FAILURE ----> DISPLAY ERROR AND EXIT
+ |
+ SUCCESS
+ |
+ v
+WELCOME SCREEN
+ |
+ +---------------------------+
+ |                           |
+Customer                   Admin
+ |                           |
+Card Input                Admin Login
+ |                           |
+PIN Verification          Admin Dashboard
+ |                           |
+Customer Menu             Admin Operations
+ |
+Operations
+ |
+Logout
+ |
+END
+\end{verbatim}
+
+
+% ============================================================
+\section{Important Business Rules}
+% ============================================================
+
+The following rules must be enforced.
+
+\begin{enumerate}
+    \item Only registered cards can access customer operations.
+    \item Blocked, expired, and cancelled cards cannot authenticate.
+    \item Maximum three consecutive incorrect PIN attempts.
+    \item Successful authentication resets failed attempt count.
+    \item Withdrawal cannot exceed account balance.
+    \item Withdrawal cannot exceed the daily withdrawal limit.
+    \item Withdrawal cannot exceed available ATM cash.
+    \item ATM must have the required denominations.
+    \item Account balance cannot become negative.
+    \item Transfer requires a valid receiver account.
+    \item Sender must have sufficient balance.
+    \item Financial transactions must be atomic.
+    \item Every successful financial transaction must be recorded.
+    \item Every transaction must have a unique transaction reference.
+    \item Logout must terminate the authenticated session.
+    \item Invalid input must not crash the application.
+\end{enumerate}
+
+
+% ============================================================
+\section{Testing Requirements}
+% ============================================================
+
+The project must include test cases for at least:
+
+\begin{longtable}{p{0.08\textwidth} p{0.42\textwidth} p{0.35\textwidth}}
+\toprule
+\textbf{ID} & \textbf{Test Case} & \textbf{Expected Result} \\
+\midrule
+T01 & Valid card + valid PIN & Login successful \\
+T02 & Invalid card & Access denied \\
+T03 & Wrong PIN once & Error + remaining attempts \\
+T04 & Wrong PIN three times & Card blocked \\
+T05 & Blocked card login & Access denied \\
+T06 & Balance enquiry & Correct balance displayed \\
+T07 & Valid withdrawal & Balance and ATM cash updated \\
+T08 & Insufficient balance & Withdrawal rejected \\
+T09 & Insufficient ATM cash & Withdrawal rejected \\
+T10 & Invalid withdrawal amount & Validation error \\
+T11 & Valid deposit & Balance and ATM cash updated \\
+T12 & Invalid transfer account & Transfer rejected \\
+T13 & Valid transfer & Sender and receiver updated \\
+T14 & Mini statement & Recent transactions displayed \\
+T15 & Correct PIN change & PIN updated \\
+T16 & Wrong current PIN & PIN change rejected \\
+T17 & Database failure & Safe error handling \\
+T18 & Transaction failure & Database rollback \\
+T19 & Admin login & Admin dashboard displayed \\
+T20 & ATM refill & Cash inventory updated \\
+\bottomrule
+\end{longtable}
+
+
+% ============================================================
+\section{Non-Functional Requirements}
+% ============================================================
+
+\begin{enumerate}
+    \item The application should be modular.
+    \item The application should be readable and maintainable.
+    \item Database operations should be centralized.
+    \item Functions should have clear responsibilities.
+    \item The application should not crash on normal invalid input.
+    \item Error messages should be understandable.
+    \item SQL queries should be safe.
+    \item Financial operations should maintain data consistency.
+\end{enumerate}
+
+
+% ============================================================
+\section{Development Phases}
+% ============================================================
+
+Development should be performed in the following order.
+
+\subsection{Phase 1 -- Environment Setup}
+
+\begin{itemize}
+    \item Install/configure C compiler.
+    \item Install MySQL.
+    \item Install/configure MySQL C Connector.
+    \item Verify C-to-MySQL connection.
+\end{itemize}
+
+\subsection{Phase 2 -- Database}
+
+\begin{itemize}
+    \item Create database.
+    \item Create tables.
+    \item Add primary keys.
+    \item Add foreign keys.
+    \item Add constraints.
+    \item Add indexes.
+    \item Insert demo data.
+\end{itemize}
+
+\subsection{Phase 3 -- C Foundation}
+
+\begin{itemize}
+    \item Create project structure.
+    \item Implement database connection module.
+    \item Implement UI utilities.
+    \item Implement input validation.
+    \item Implement common utilities.
+\end{itemize}
+
+\subsection{Phase 4 -- Authentication}
+
+\begin{itemize}
+    \item Card lookup.
+    \item Card status validation.
+    \item PIN verification.
+    \item Failed attempt tracking.
+    \item Card blocking.
+    \item Session creation.
+\end{itemize}
+
+\subsection{Phase 5 -- Customer Operations}
+
+\begin{itemize}
+    \item Balance enquiry.
+    \item Withdrawal.
+    \item Deposit.
+    \item Transfer.
+    \item Mini statement.
+    \item PIN change.
+    \item Logout.
+\end{itemize}
+
+\subsection{Phase 6 -- ATM Management}
+
+\begin{itemize}
+    \item Denomination management.
+    \item ATM cash calculation.
+    \item Withdrawal denomination algorithm.
+    \item ATM refill.
+\end{itemize}
+
+\subsection{Phase 7 -- Admin Panel}
+
+\begin{itemize}
+    \item Admin authentication.
+    \item Customer management.
+    \item Account management.
+    \item Card management.
+    \item Transaction reports.
+    \item ATM cash management.
+\end{itemize}
+
+\subsection{Phase 8 -- Testing}
+
+Perform unit testing, integration testing, database testing and
+transaction rollback testing.
+
+\subsection{Phase 9 -- Documentation}
+
+Prepare complete MCA project documentation.
+
+
+% ============================================================
+\section{Expected Final Deliverable}
+% ============================================================
+
+The final system should provide:
+
+\begin{itemize}
+    \item A working C terminal application.
+    \item MySQL database.
+    \item Database schema SQL file.
+    \item Demo/seed SQL data.
+    \item Modular C source code.
+    \item Header files.
+    \item Build instructions.
+    \item Test cases.
+    \item Sample transaction receipts.
+    \item Project documentation.
+    \item ER diagram.
+    \item DFD.
+    \item Flowcharts.
+    \item Database relational schema.
+\end{itemize}
+
+
+% ============================================================
+\section{Important Development Rule for AI-Assisted Development}
+% ============================================================
+
+If an AI coding assistant such as Antigravity is used, it must not
+generate the entire project blindly in a single step.
+
+The project must be developed incrementally.
+
+The AI must:
+
+\begin{enumerate}
+    \item Understand the architecture before writing code.
+    \item Confirm dependencies before using them.
+    \item Keep modules separated.
+    \item Avoid duplicate functions.
+    \item Avoid global mutable state unless necessary.
+    \item Use the database schema as the source of truth.
+    \item Compile the project after meaningful changes.
+    \item Fix compiler warnings.
+    \item Test database operations.
+    \item Test financial transaction rollback.
+    \item Never silently change business rules.
+\end{enumerate}
+
+
+% ============================================================
+\section{Future Scope}
+% ============================================================
+
+Possible future enhancements include:
+
+\begin{itemize}
+    \item Multiple ATM locations.
+    \item Bank-to-bank transfers.
+    \item OTP-based authentication.
+    \item Account statement export.
+    \item PDF receipt generation.
+    \item GUI frontend.
+    \item Role-based administrative permissions.
+    \item Audit logs.
+    \item Advanced fraud detection.
+    \item Network-based ATM server architecture.
+\end{itemize}
+
+
+% ============================================================
+\section{Project Philosophy}
+% ============================================================
+
+The objective is not to create a large amount of code.
+
+The objective is to create a logically correct, modular, database-driven
+ATM simulation that demonstrates:
+
+\begin{verbatim}
+C Programming
+      +
+Data Structures
+      +
+Functions and Modules
+      +
+SQL
+      +
+Relational Database
+      +
+Authentication
+      +
+Transaction Management
+      +
+Error Handling
+      +
+Security
+      +
+Software Engineering
+\end{verbatim}
+
+The final application should therefore prioritize correctness,
+maintainability, database consistency and realistic ATM behavior over
+unnecessary features.
+
+\end{document}
+```

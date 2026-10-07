@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+*.exe
+*.o
+*.obj
+*.dll
+
+# Environment and sensitive credentials
+.env
+*.env
+*.log
+*.tmp
+
+# Temporary files
+*.swp
+*~
+
+# Local MySQL and credential files
+.my.cnf
+*.cnf
+config.local.*
